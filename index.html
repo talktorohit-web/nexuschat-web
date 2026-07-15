@@ -1239,13 +1239,15 @@ img { display: block; max-width: 100%; }
   function startThreadListener() {
     stopThreadListener();
     const pk = pairKey(session.uid, activeContact.id);
-    // No orderBy in the query (avoids needing a composite index); sorted client-side.
-    const q = f().query(msgsCol(), f().where("pair", "==", pk));
+    // Query by participants (a rules-provably-safe filter), then keep this
+    // conversation's messages client-side. Sorted client-side too, so no index.
+    const q = f().query(msgsCol(), f().where("participants", "array-contains", session.uid));
     threadUnsub = f().onSnapshot(q, async (snap) => {
       const msgs = [];
       const toMarkRead = [];
       snap.forEach(d => {
         const m = d.data();
+        if (m.pair !== pk) return;
         if (m.to === session.uid && !m.read) toMarkRead.push(d.id);
         msgs.push({
           id: d.id, mine: m.from === session.uid, body: m.body, kind: m.kind, meta: m.meta || {},
