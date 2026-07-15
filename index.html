@@ -742,18 +742,22 @@ img { display: block; max-width: 100%; }
 .call-status { font-size: 15px; opacity: .85; font-variant-numeric: tabular-nums; }
 .call-controls {
   position: relative; z-index: 3; margin-top: auto;
-  display: flex; justify-content: center; gap: 22px;
+  display: flex; justify-content: center; align-items: flex-start;
+  gap: 12px; flex-wrap: wrap; padding: 0 6px 26px;
 }
 .call-ctl {
-  width: 60px; height: 60px; border-radius: 50%;
+  width: 56px; height: 56px; border-radius: 50%; position: relative;
   background: rgba(255,255,255,.16); backdrop-filter: blur(8px);
   display: grid; place-items: center; color: #fff; transition: transform .12s, background .15s;
+  margin-bottom: 20px;
 }
 .call-ctl:active { transform: scale(.9); }
-.call-ctl svg { width: 26px; height: 26px; fill: currentColor; }
+.call-ctl svg { width: 25px; height: 25px; fill: currentColor; }
+.call-ctl .ctl-label { position: absolute; left: 50%; bottom: -20px; transform: translateX(-50%); font: 500 11px/1 -apple-system, sans-serif; font-style: normal; color: rgba(255,255,255,.72); white-space: nowrap; }
 .call-ctl.off { background: #fff; color: #0b141a; }
 .call-ctl.call-end { background: #ef4444; }
 .call-ctl.call-end svg { transform: rotate(135deg); }
+.call-screen:not(.video-on) .call-video-only { display: none; }
 
 .incoming-call {
   position: absolute; inset: 0; z-index: 80;
@@ -1057,9 +1061,11 @@ video.media-real { max-height: 300px; }
       <div class="call-status" id="call-status">Calling…</div>
     </div>
     <div class="call-controls">
-      <button class="call-ctl" id="call-mute" aria-label="Mute"><svg viewBox="0 0 24 24"><path d="M12 14a3 3 0 003-3V5a3 3 0 00-6 0v6a3 3 0 003 3zm5-3a5 5 0 01-10 0H5a7 7 0 006 6.92V21h2v-3.08A7 7 0 0019 11h-2z"/></svg></button>
-      <button class="call-ctl" id="call-camera" aria-label="Camera"><svg viewBox="0 0 24 24"><path d="M17 10.5V7a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h12a1 1 0 001-1v-3.5l4 4v-11l-4 4z"/></svg></button>
-      <button class="call-ctl call-end" id="call-end" aria-label="End call"><svg viewBox="0 0 24 24"><path d="M12 9c-1.6 0-3.15.25-4.6.72v3.1c0 .39-.23.74-.56.9-.98.49-1.87 1.12-2.66 1.85a.98.98 0 01-.67.27c-.26 0-.5-.11-.67-.28L.28 13.9a.99.99 0 01-.28-.7c0-.28.11-.53.29-.7C3.34 9.78 7.46 8 12 8s8.66 1.78 11.71 4.5c.18.17.29.42.29.7 0 .28-.11.53-.28.7l-1.89 1.86a.98.98 0 01-.67.28.96.96 0 01-.67-.28 11.67 11.67 0 00-2.66-1.85.998.998 0 01-.56-.9v-3.1A15.6 15.6 0 0012 9z"/></svg></button>
+      <button class="call-ctl" id="call-mute" aria-label="Mute"><svg viewBox="0 0 24 24"><path d="M12 14a3 3 0 003-3V5a3 3 0 00-6 0v6a3 3 0 003 3zm5-3a5 5 0 01-10 0H5a7 7 0 006 6.92V21h2v-3.08A7 7 0 0019 11h-2z"/></svg><i class="ctl-label">Mute</i></button>
+      <button class="call-ctl" id="call-speaker" aria-label="Speaker"><svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3A4.5 4.5 0 0014 7.97v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg><i class="ctl-label">Speaker</i></button>
+      <button class="call-ctl call-video-only" id="call-flip" aria-label="Flip camera"><svg viewBox="0 0 24 24"><path d="M20 5h-3.17L15 3H9L7.17 5H4a2 2 0 00-2 2v12a2 2 0 002 2h16a2 2 0 002-2V7a2 2 0 00-2-2zm-8 3l-2.5 2.5h1.75v2h1.5v-2H16L12 8zm0 8l2.5-2.5h-1.75v-2h-1.5v2H8l4 2.5z"/></svg><i class="ctl-label">Flip</i></button>
+      <button class="call-ctl call-video-only" id="call-camera" aria-label="Camera"><svg viewBox="0 0 24 24"><path d="M17 10.5V7a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h12a1 1 0 001-1v-3.5l4 4v-11l-4 4z"/></svg><i class="ctl-label">Camera</i></button>
+      <button class="call-ctl call-end" id="call-end" aria-label="End call"><svg viewBox="0 0 24 24"><path d="M12 9c-1.6 0-3.15.25-4.6.72v3.1c0 .39-.23.74-.56.9-.98.49-1.87 1.12-2.66 1.85a.98.98 0 01-.67.27c-.26 0-.5-.11-.67-.28L.28 13.9a.99.99 0 01-.28-.7c0-.28.11-.53.29-.7C3.34 9.78 7.46 8 12 8s8.66 1.78 11.71 4.5c.18.17.29.42.29.7 0 .28-.11.53-.28.7l-1.89 1.86a.98.98 0 01-.67.28.96.96 0 01-.67-.28 11.67 11.67 0 00-2.66-1.85.998.998 0 01-.56-.9v-3.1A15.6 15.6 0 0012 9z"/></svg><i class="ctl-label">End</i></button>
     </div>
   </div>
 
@@ -1296,7 +1302,7 @@ video.media-real { max-height: 300px; }
   }
   async function logout() {
     stopListeners();
-    hangUp(true); stopIncoming(); handledCalls = new Set();
+    hangUp(true); stopIncoming(); stopPresence(); handledCalls = new Set();
     try { await FB.authMod.signOut(FB.auth); } catch (e) {}
     session = null; activeContact = null;
     navStack = ["screen-login"];
@@ -1315,6 +1321,7 @@ video.media-real { max-height: 300px; }
     $$(".bottom-nav").forEach(nav => $$("button", nav).forEach((b, i) => b.classList.toggle("active", i === 0)));
     startConversationsListener();
     listenIncoming();
+    startPresence();
   }
 
   // ---------- Conversations (real-time) ----------
@@ -1334,17 +1341,16 @@ video.media-real { max-height: 300px; }
     await refreshUsersCache();
     const q = f().query(msgsCol(), f().where("participants", "array-contains", session.uid));
     listUnsub = f().onSnapshot(q, (snap) => {
-      const byContact = {};
+      const byContact = {}, unread = {};
       snap.forEach(d => {
-        const m = d.data(); const other = m.from === session.uid ? m.to : m.from;
+        const m = d.data();
+        if ((m.hiddenFor || []).includes(session.uid)) return;
+        const other = m.from === session.uid ? m.to : m.from;
         const t = tsMillis(m.createdAt);
         const cur = byContact[other];
-        if (!cur || t > cur.last_at) byContact[other] = { last_at: t, body: m.body, kind: m.kind, sender_id: m.from };
-        if (!cur) byContact[other] = byContact[other];
+        if (!cur || t > cur.last_at) byContact[other] = { last_at: t, body: m.deleted ? "🚫 This message was deleted" : m.body, kind: m.deleted ? "text" : m.kind, sender_id: m.from };
+        if (m.to === session.uid && !m.read && !m.deleted) unread[other] = (unread[other] || 0) + 1;
       });
-      // unread counts
-      const unread = {};
-      snap.forEach(d => { const m = d.data(); if (m.to === session.uid && !m.read) unread[m.from] = (unread[m.from] || 0) + 1; });
       convItems = Object.keys(byContact).map(uid => {
         const prof = usersCache[uid];
         return {
@@ -1378,17 +1384,59 @@ video.media-real { max-height: 300px; }
     }));
   }
 
+  // ---------- Presence + typing indicators ----------
+  let typingUnsub = null, presenceUnsub = null, headStatusTimer = null;
+  let myTypingAt = 0, otherTypingTs = 0, otherPresence = null;
+  let presenceBeat = null;
+  function startPresence() {
+    const beat = () => { try { f().setDoc(f().doc(FB.db, "presence", session.uid), { lastActive: Date.now() }, { merge: true }); } catch (e) {} };
+    beat(); if (presenceBeat) clearInterval(presenceBeat); presenceBeat = setInterval(beat, 25000);
+    document.addEventListener("visibilitychange", beat);
+  }
+  function stopPresence() { if (presenceBeat) { clearInterval(presenceBeat); presenceBeat = null; } }
+  function setTyping() {
+    if (!activeContact) return;
+    const now = Date.now(); if (now - myTypingAt < 2200) return; myTypingAt = now;
+    try { f().setDoc(f().doc(FB.db, "typing", pairKey(session.uid, activeContact.id)), { [session.uid]: now }, { merge: true }); } catch (e) {}
+  }
+  function clearTyping() {
+    if (!activeContact) return; myTypingAt = 0;
+    try { f().setDoc(f().doc(FB.db, "typing", pairKey(session.uid, activeContact.id)), { [session.uid]: 0 }, { merge: true }); } catch (e) {}
+  }
+  function lastSeenStr(ms) { const d = new Date(ms), now = new Date(); return (d.toDateString() === now.toDateString() ? "today at " : fmtListTime(ms) + " at ") + fmtTime(ms); }
+  function refreshHeadStatus() {
+    if (!activeContact) return; const el = $("#chat-head-status");
+    if (Date.now() - otherTypingTs < 4000) { el.textContent = "typing…"; return; }
+    if (otherPresence && Date.now() - otherPresence < 35000) { el.textContent = "online"; return; }
+    if (otherPresence) { el.textContent = "last seen " + lastSeenStr(otherPresence); return; }
+    el.textContent = activeContact.bio || "";
+  }
+  function startChatMeta() {
+    stopChatMeta();
+    const pk = pairKey(session.uid, activeContact.id);
+    typingUnsub = f().onSnapshot(f().doc(FB.db, "typing", pk), (s) => { const d = s.data() || {}; otherTypingTs = d[activeContact.id] || 0; refreshHeadStatus(); }, () => {});
+    presenceUnsub = f().onSnapshot(f().doc(FB.db, "presence", activeContact.id), (s) => { const d = s.data(); otherPresence = d ? d.lastActive : null; refreshHeadStatus(); }, () => {});
+    headStatusTimer = setInterval(refreshHeadStatus, 3000);
+  }
+  function stopChatMeta() {
+    if (typingUnsub) { typingUnsub(); typingUnsub = null; }
+    if (presenceUnsub) { presenceUnsub(); presenceUnsub = null; }
+    if (headStatusTimer) { clearInterval(headStatusTimer); headStatusTimer = null; }
+    otherTypingTs = 0; otherPresence = null;
+  }
+
   // ---------- Thread (real-time) ----------
   async function openChat(contact) {
     activeContact = contact;
     $("#chat-head-avatar").textContent = contact.avatar;
     $("#chat-head-avatar").style.cssText = "width:40px;height:40px;font-size:16px;" + avatarStyle(contact);
     $("#chat-head-name").textContent = contact.name;
-    $("#chat-head-status").textContent = contact.bio || "online";
+    $("#chat-head-status").textContent = contact.bio || "";
     closeEmoji();
     $("#messages").innerHTML = "";
     show("screen-chat");
     startThreadListener();
+    startChatMeta();
   }
   function stopThreadListener() { if (threadUnsub) { threadUnsub(); threadUnsub = null; } }
   function startThreadListener() {
@@ -1403,6 +1451,7 @@ video.media-real { max-height: 300px; }
       snap.forEach(d => {
         const m = d.data();
         if (m.pair !== pk) return;
+        if ((m.hiddenFor || []).includes(session.uid)) return;
         if (m.to === session.uid && !m.read) toMarkRead.push(d.id);
         msgs.push({
           id: d.id, mine: m.from === session.uid, body: m.body, kind: m.kind, meta: m.meta || {},
@@ -1491,18 +1540,18 @@ video.media-real { max-height: 300px; }
     if (replyTo) { doc.replyTo = replyTo; clearContext(); }
     try {
       await f().addDoc(msgsCol(), doc);
-      chime("send");
+      chime("send"); clearTyping();
     } catch (e) { toast("Couldn't send message."); }
   }
 
-  function stopListeners() { stopThreadListener(); stopConversationsListener(); }
+  function stopListeners() { stopThreadListener(); stopConversationsListener(); stopChatMeta(); }
 
   // ============================================================
   //  Composer (unchanged UI behaviour)
   // ============================================================
   const input = $("#msg-input"), sendBtn = $("#btn-send");
   function updateSendIcon() { const has = input.value.trim().length > 0; $("#ic-mic").classList.toggle("hidden", has); $("#ic-send").classList.toggle("hidden", !has); }
-  input.addEventListener("input", () => { input.style.height = "auto"; input.style.height = Math.min(input.scrollHeight, 110) + "px"; updateSendIcon(); });
+  input.addEventListener("input", () => { input.style.height = "auto"; input.style.height = Math.min(input.scrollHeight, 110) + "px"; updateSendIcon(); if (!editing) setTyping(); });
   input.addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); doSend(); } });
   function doSend() {
     const v = input.value.trim();
@@ -1659,25 +1708,29 @@ video.media-real { max-height: 300px; }
     showContext("Editing message", m.body || "");
     input.focus();
   }
-  function deleteMessage(m) {
-    openModal(`<h3>Delete message?</h3><div class="msub">This removes it for everyone in the chat.</div>
+  async function deleteForEveryone(m) {
+    try { await f().updateDoc(f().doc(FB.db, "messages", m.id), { deleted: true, body: "", meta: {} }); toast("Deleted for everyone"); }
+    catch (e) { toast("Couldn't delete"); }
+  }
+  async function deleteForMe(m) {
+    try { await f().updateDoc(f().doc(FB.db, "messages", m.id), { hiddenFor: f().arrayUnion(session.uid) }); toast("Deleted for you"); }
+    catch (e) { toast("Couldn't delete"); }
+  }
+  function confirmDeleteEveryone(m) {
+    openModal(`<h3>Delete for everyone?</h3><div class="msub">This message will be removed for everyone in the chat.</div>
       <div class="modal-actions"><button class="cancel">Cancel</button><button class="confirm" style="background:var(--danger)">Delete</button></div>`,
-      (root) => $(".confirm", root).addEventListener("click", async () => {
-        closeModal();
-        try { await f().updateDoc(f().doc(FB.db, "messages", m.id), { deleted: true, body: "", meta: {} }); }
-        catch (e) { toast("Couldn't delete"); }
-      }));
+      (root) => $(".confirm", root).addEventListener("click", () => { closeModal(); deleteForEveryone(m); }));
   }
   function openMessageMenu(id) {
     const m = currentMsgs.find(x => x.id === id); if (!m || m.deleted) return;
     const canEdit = m.mine && m.kind === "text";
-    const canDelete = m.mine;
     openModal(`<h3>Message</h3>
       <div class="msg-menu">
         <button class="msg-act" data-a="reply"><span class="ma-ic">↩︎</span>Reply</button>
         ${m.body ? `<button class="msg-act" data-a="copy"><span class="ma-ic">⧉</span>Copy text</button>` : ""}
         ${canEdit ? `<button class="msg-act" data-a="edit"><span class="ma-ic">✏️</span>Edit</button>` : ""}
-        ${canDelete ? `<button class="msg-act danger" data-a="delete"><span class="ma-ic">🗑</span>Delete</button>` : ""}
+        <button class="msg-act danger" data-a="delme"><span class="ma-ic">🗑</span>Delete for me</button>
+        ${m.mine ? `<button class="msg-act danger" data-a="delall"><span class="ma-ic">🗑</span>Delete for everyone</button>` : ""}
       </div>
       <div class="modal-actions"><button class="cancel">Cancel</button></div>`,
       (root) => $$(".msg-act", root).forEach(btn => btn.addEventListener("click", () => {
@@ -1685,7 +1738,8 @@ video.media-real { max-height: 300px; }
         if (a === "reply") startReply(m);
         else if (a === "copy") { copyText(m.body); toast("Copied"); }
         else if (a === "edit") startEdit(m);
-        else if (a === "delete") deleteMessage(m);
+        else if (a === "delme") deleteForMe(m);
+        else if (a === "delall") confirmDeleteEveryone(m);
       })));
   }
   function setupMessageInteractions() {
@@ -1766,19 +1820,38 @@ video.media-real { max-height: 300px; }
   // ============================================================
   //  Calls (decorative, from contacts)
   // ============================================================
-  function renderCalls() {
+  async function renderCalls() {
     const list = $("#calls-list");
-    const contacts = convItems.map(it => it.contact).slice(0, 6);
-    if (!contacts.length) { list.innerHTML = `<div class="empty-state"><div class="big">📞</div><div>No recent calls</div></div>`; return; }
-    list.innerHTML = contacts.map((c, i) => {
-      const missed = i % 3 === 2, inc = i % 2 === 0, video = i % 2 === 1;
-      const arrow = missed ? "#ef4444" : (inc ? "#31a24c" : "var(--accent)");
-      const path = inc ? "M20 5.41L18.59 4 7 15.59V9H5v10h10v-2H8.41z" : "M5 18.59L6.41 20 18 8.41V15h2V5H10v2h6.59z";
-      return `<div class="chat-row"><div class="avatar" style="width:48px;height:48px;font-size:18px;${avatarStyle(c)}">${c.avatar}</div>
-        <div class="meta"><div class="line1"><span class="name" style="${missed?'color:var(--danger)':''}">${escapeHtml(c.name)}</span></div>
-        <div class="line2"><svg viewBox="0 0 24 24" style="width:16px;height:16px;fill:${arrow}"><path d="${path}"/></svg><span class="snippet">Recently</span></div></div>
-        <button class="icon-btn" style="color:var(--accent)"><svg viewBox="0 0 24 24">${video?'<path d="M17 10.5V7a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h12a1 1 0 001-1v-3.5l4 4v-11l-4 4z"/>':'<path d="M6.62 10.79c1.44 2.83 3.76 5.14 6.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57a1 1 0 011 1V20a1 1 0 01-1 1A17 17 0 013 4a1 1 0 011-1h3.5a1 1 0 011 1c0 1.25.2 2.45.57 3.57.11.35.03.74-.25 1.02l-2.2 2.2z"/>'}</svg></button></div>`;
+    if (!session) return;
+    let calls = [];
+    try {
+      const snap = await f().getDocs(f().query(callsCol(), f().where("parties", "array-contains", session.uid)));
+      snap.forEach(d => calls.push(Object.assign({ id: d.id }, d.data())));
+    } catch (e) {}
+    calls = calls.filter(c => c.createdAt).sort((a, b) => tsMillis(b.createdAt) - tsMillis(a.createdAt)).slice(0, 40);
+    if (!calls.length) { list.innerHTML = `<div class="empty-state"><div class="big">📞</div><div>No recent calls</div><div style="font-size:13px">Start one from any chat's ☎ / 🎥 button</div></div>`; return; }
+    list.innerHTML = calls.map(c => {
+      const out = c.caller === session.uid;
+      const otherId = out ? c.callee : c.caller;
+      const name = out ? (c.calleeName || "Unknown") : (c.callerName || "Unknown");
+      const avatar = out ? (c.calleeAvatar || "👤") : (c.callerAvatar || "👤");
+      const color = out ? (c.calleeColor || "#888") : (c.callerColor || "#888");
+      const missed = !out && (c.status === "declined" || c.status === "ringing");
+      const arrow = missed ? "#ef4444" : (out ? "var(--accent)" : "#31a24c");
+      const path = out ? "M5 18.59L6.41 20 18 8.41V15h2V5H10v2h6.59z" : "M20 5.41L18.59 4 7 15.59V9H5v10h10v-2H8.41z";
+      return `<div class="chat-row" data-callother="${otherId}" data-calltype="${c.type || 'audio'}">
+        <div class="avatar" style="width:48px;height:48px;font-size:18px;background:${color}">${avatar}</div>
+        <div class="meta"><div class="line1"><span class="name" style="${missed ? 'color:var(--danger)' : ''}">${escapeHtml(name)}</span><span class="time">${fmtListTime(tsMillis(c.createdAt))}</span></div>
+        <div class="line2"><svg viewBox="0 0 24 24" style="width:16px;height:16px;fill:${arrow}"><path d="${path}"/></svg><span class="snippet">${missed ? 'Missed' : (out ? 'Outgoing' : 'Incoming')} ${c.type === 'video' ? 'video' : 'voice'} call</span></div></div>
+        <button class="icon-btn call-back-btn" style="color:var(--accent)"><svg viewBox="0 0 24 24">${c.type === 'video' ? '<path d="M17 10.5V7a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h12a1 1 0 001-1v-3.5l4 4v-11l-4 4z"/>' : '<path d="M6.62 10.79c1.44 2.83 3.76 5.14 6.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57a1 1 0 011 1V20a1 1 0 01-1 1A17 17 0 013 4a1 1 0 011-1h3.5a1 1 0 011 1c0 1.25.2 2.45.57 3.57.11.35.03.74-.25 1.02l-2.2 2.2z"/>'}</svg></button>
+      </div>`;
     }).join("");
+    $$("#calls-list .call-back-btn").forEach(btn => btn.addEventListener("click", () => {
+      const row = btn.closest("[data-callother]");
+      const prof = usersCache[row.dataset.callother];
+      if (prof) startCall(pubUser(row.dataset.callother, prof), row.dataset.calltype);
+      else toast("Contact unavailable");
+    }));
   }
 
   // ============================================================
@@ -1911,7 +1984,7 @@ video.media-real { max-height: 300px; }
     $("#btn-admin-enter").addEventListener("click", openAdmin);
     $("#admin-enter-row").addEventListener("click", openAdmin);
     $("#admin-back").addEventListener("click", () => show("screen-chats", { back: true }));
-    $("#chat-back").addEventListener("click", () => { closeEmoji(); if (recording) stopRecording(false); clearContext(); input.value = ""; input.style.height = "auto"; updateSendIcon(); stopThreadListener(); activeContact = null; show("screen-chats", { back: true }); });
+    $("#chat-back").addEventListener("click", () => { closeEmoji(); if (recording) stopRecording(false); clearContext(); clearTyping(); stopChatMeta(); input.value = ""; input.style.height = "auto"; updateSendIcon(); stopThreadListener(); activeContact = null; show("screen-chats", { back: true }); });
     $("#btn-voice-call").addEventListener("click", () => { if (activeContact) startCall(activeContact, "audio"); });
     $("#btn-video-call").addEventListener("click", () => { if (activeContact) startCall(activeContact, "video"); });
     bindCallControls();
@@ -1954,7 +2027,8 @@ video.media-real { max-height: 300px; }
     remoteStream = null;
     try { $("#remote-video").srcObject = null; $("#local-video").srcObject = null; } catch (e) {}
     const cs = $("#call-screen"); cs.classList.remove("open", "video-on");
-    $("#call-mute").classList.remove("off"); $("#call-camera").classList.remove("off");
+    $("#call-mute").classList.remove("off"); $("#call-camera").classList.remove("off"); $("#call-speaker").classList.remove("off");
+    speakerOn = false; facing = "user";
     callRef = null; inCall = false;
   }
   function startCallTimer() {
@@ -1992,8 +2066,9 @@ video.media-real { max-height: 300px; }
     pc.onconnectionstatechange = () => { if (pc && pc.connectionState === "connected") startCallTimer(); };
     const offer = await pc.createOffer(); await pc.setLocalDescription(offer);
     await f().setDoc(callRef, {
-      caller: session.uid, callee: contact.id, type,
+      caller: session.uid, callee: contact.id, parties: [session.uid, contact.id], type,
       callerName: session.user.name, callerAvatar: session.user.avatar, callerColor: session.user.color,
+      calleeName: contact.name, calleeAvatar: contact.avatar, calleeColor: contact.color,
       offer: { type: offer.type, sdp: offer.sdp }, status: "ringing", createdAt: f().serverTimestamp(),
     });
     callUnsubs.push(f().onSnapshot(callRef, (snap) => {
@@ -2054,16 +2129,47 @@ video.media-real { max-height: 300px; }
     }, (e) => {});
   }
   function stopIncoming() { if (incomingUnsub) { incomingUnsub(); incomingUnsub = null; } hideIncoming(); }
+  let speakerOn = false, facing = "user";
+  async function toggleSpeaker() {
+    speakerOn = !speakerOn;
+    $("#call-speaker").classList.toggle("off", speakerOn);
+    const remote = $("#remote-video");
+    try {
+      if (remote.setSinkId) {
+        const outs = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === "audiooutput");
+        const spk = outs.find(d => /speaker/i.test(d.label));
+        const ear = outs.find(d => /(earpiece|receiver)/i.test(d.label)) || outs.find(d => d.deviceId === "default") || outs[0];
+        const target = speakerOn ? (spk || outs[0]) : (ear || outs[0]);
+        if (target) await remote.setSinkId(target.deviceId);
+      }
+    } catch (e) {}
+    toast(speakerOn ? "🔊 Speaker on" : "🔈 Speaker off");
+  }
+  async function flipCamera() {
+    if (!localStream || !pc) return;
+    facing = facing === "user" ? "environment" : "user";
+    try {
+      const ns = await navigator.mediaDevices.getUserMedia({ video: { facingMode: facing }, audio: false });
+      const nt = ns.getVideoTracks()[0];
+      const sender = pc.getSenders().find(s => s.track && s.track.kind === "video");
+      if (sender) await sender.replaceTrack(nt);
+      const old = localStream.getVideoTracks()[0]; if (old) { localStream.removeTrack(old); old.stop(); }
+      localStream.addTrack(nt); $("#local-video").srcObject = localStream;
+    } catch (e) { toast("Couldn't switch camera"); }
+  }
   function bindCallControls() {
     $("#call-end").addEventListener("click", () => hangUp(true));
     $("#call-mute").addEventListener("click", () => {
       if (!localStream) return; const tr = localStream.getAudioTracks()[0]; if (!tr) return;
       tr.enabled = !tr.enabled; $("#call-mute").classList.toggle("off", !tr.enabled);
+      toast(tr.enabled ? "Unmuted" : "Muted");
     });
     $("#call-camera").addEventListener("click", () => {
       if (!localStream) return; const tr = localStream.getVideoTracks()[0]; if (!tr) return;
       tr.enabled = !tr.enabled; $("#call-camera").classList.toggle("off", !tr.enabled);
     });
+    $("#call-speaker").addEventListener("click", toggleSpeaker);
+    $("#call-flip").addEventListener("click", flipCamera);
   }
 
   // ============================================================
