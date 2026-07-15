@@ -1239,7 +1239,8 @@ img { display: block; max-width: 100%; }
   function startThreadListener() {
     stopThreadListener();
     const pk = pairKey(session.uid, activeContact.id);
-    const q = f().query(msgsCol(), f().where("pair", "==", pk), f().orderBy("createdAt", "asc"));
+    // No orderBy in the query (avoids needing a composite index); sorted client-side.
+    const q = f().query(msgsCol(), f().where("pair", "==", pk));
     threadUnsub = f().onSnapshot(q, async (snap) => {
       const msgs = [];
       const toMarkRead = [];
@@ -1252,6 +1253,7 @@ img { display: block; max-width: 100%; }
           status: m.from === session.uid ? (m.read ? "read" : "delivered") : "in",
         });
       });
+      msgs.sort((a, b) => a.created_at - b.created_at);
       renderMessages(msgs);
       // mark their messages as read
       for (const id of toMarkRead) { try { await f().updateDoc(f().doc(FB.db, "messages", id), { read: true }); } catch (e) {} }
