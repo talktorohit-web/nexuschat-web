@@ -775,6 +775,54 @@ img { display: block; max-width: 100%; }
 .inc-decline svg { transform: rotate(135deg); }
 @keyframes bob { 50% { transform: translateY(-6px); } }
 
+/* ============================================================
+   Real media, reply quotes, message menu, edit/reply bar
+   ============================================================ */
+.media-real {
+  display: block; width: 236px; max-width: 64vw; border-radius: 9px;
+  margin-bottom: 3px; background: var(--card-2); object-fit: cover;
+}
+video.media-real { max-height: 300px; }
+.bubble a { text-decoration: none; color: inherit; }
+.doc-chip[href] { cursor: pointer; }
+.loc-link { display: block; }
+.voice audio { display: none; }
+.voice .play.playing svg { opacity: .6; }
+.bubble { cursor: pointer; }
+.bubble .foot .edited { font-style: italic; opacity: .8; margin-right: 2px; }
+.bubble .txt.deleted { font-style: italic; opacity: .7; display: flex; align-items: center; gap: 4px; }
+.reply-quote {
+  border-left: 3px solid var(--accent); background: color-mix(in srgb, var(--text) 6%, transparent);
+  border-radius: 6px; padding: 5px 8px; margin-bottom: 5px; max-width: 100%; overflow: hidden;
+}
+.bubble.out .reply-quote { border-left-color: color-mix(in srgb, var(--bubble-out-text) 55%, transparent); }
+.reply-quote .rq-name { font-size: 12px; font-weight: 700; color: var(--accent); margin-bottom: 1px; }
+.bubble.out .reply-quote .rq-name { color: color-mix(in srgb, var(--bubble-out-text) 80%, transparent); }
+.reply-quote .rq-text { font-size: 13px; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.context-bar {
+  flex-shrink: 0; display: none; align-items: center; gap: 10px;
+  background: var(--bg-2); border-top: 1px solid var(--border);
+  padding: 8px 10px 8px 0;
+}
+.context-bar.open { display: flex; }
+.context-bar .ctx-accent { width: 4px; align-self: stretch; background: var(--accent); border-radius: 0 3px 3px 0; }
+.context-bar .ctx-body { flex: 1; min-width: 0; }
+.context-bar .ctx-title { font-size: 13px; font-weight: 700; color: var(--accent); }
+.context-bar .ctx-snippet { font-size: 13px; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.context-bar .ctx-close { width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; color: var(--text-dim); flex-shrink: 0; }
+.context-bar .ctx-close svg { width: 20px; height: 20px; fill: currentColor; }
+
+.msg-menu { display: flex; flex-direction: column; gap: 2px; margin: 4px 0; }
+.msg-act {
+  display: flex; align-items: center; gap: 14px; width: 100%;
+  padding: 14px 12px; border-radius: 12px; font-size: 15px; font-weight: 500;
+  color: var(--text); text-align: left; transition: background .12s;
+}
+.msg-act:active { background: var(--card-2); }
+.msg-act .ma-ic { width: 22px; text-align: center; font-size: 17px; }
+.msg-act.danger { color: var(--danger); }
+
 .hidden { display: none !important; }
 </style>
 </head>
@@ -1360,9 +1408,11 @@ img { display: block; max-width: 100%; }
           id: d.id, mine: m.from === session.uid, body: m.body, kind: m.kind, meta: m.meta || {},
           created_at: tsMillis(m.createdAt),
           status: m.from === session.uid ? (m.read ? "read" : "delivered") : "in",
+          replyTo: m.replyTo || null, edited: !!m.edited, deleted: !!m.deleted,
         });
       });
       msgs.sort((a, b) => a.created_at - b.created_at);
+      currentMsgs = msgs;
       renderMessages(msgs);
       // mark their messages as read
       for (const id of toMarkRead) { try { await f().updateDoc(f().doc(FB.db, "messages", id), { read: true }); } catch (e) {} }
@@ -1388,33 +1438,59 @@ img { display: block; max-width: 100%; }
     box.innerHTML = html;
     if (atBottom) box.scrollTop = box.scrollHeight;
   }
+  function msgPreview(m) {
+    if (m.deleted) return "🚫 deleted";
+    if (m.kind === "voice") return "🎤 Voice message";
+    if (m.kind === "image") return "📷 Photo";
+    if (m.kind === "video") return "🎬 Video";
+    if (m.kind === "doc") return "📄 " + ((m.meta && m.meta.docname) || "Document");
+    if (m.kind === "location") return "📍 Location";
+    return m.body || "";
+  }
   function renderBubble(m) {
     const out = m.mine, meta = m.meta || {};
-    const foot = `<span class="foot">${fmtTime(m.created_at)}${out ? tickSVG(m.status) : ""}</span>`;
+    if (m.deleted) {
+      return `<div class="bubble ${out ? "out" : "in"} is-deleted" data-id="${m.id}"><div class="txt deleted">🚫 ${out ? "You deleted this message" : "This message was deleted"}</div><span class="foot">${fmtTime(m.created_at)}</span></div>`;
+    }
+    const foot = `<span class="foot">${m.edited ? '<span class="edited">edited</span> ' : ""}${fmtTime(m.created_at)}${out ? tickSVG(m.status) : ""}</span>`;
+    const reply = m.replyTo ? `<div class="reply-quote"><div class="rq-name">${escapeHtml(m.replyTo.name || "")}</div><div class="rq-text">${escapeHtml(m.replyTo.snippet || "")}</div></div>` : "";
     let inner = "";
     if (m.kind === "voice") {
-      inner = `<div class="voice"><span class="play"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></span><span class="wave">${Array.from({length:22},(_,i)=>`<i style="height:${20+Math.abs(Math.sin(i*1.3))*70|0}%"></i>`).join("")}</span><span class="dur">${meta.dur||"0:08"}</span></div>`;
-    } else if (m.kind === "image" || m.kind === "video") {
-      inner = `<div class="media-img">${m.kind==="video"?'<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>':'<svg viewBox="0 0 24 24"><path d="M21 19V5a2 2 0 00-2-2H5a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2zM8.5 13.5l2.5 3 3.5-4.5 4.5 6H5l3.5-4.5z"/></svg>'}</div>${meta.caption ? `<div class="txt">${escapeHtml(meta.caption)}</div>` : ""}`;
+      inner = `<div class="voice">${meta.data ? `<audio src="${meta.data}" preload="none"></audio>` : ""}<span class="play"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></span><span class="wave">${Array.from({length:22},(_,i)=>`<i style="height:${20+Math.abs(Math.sin(i*1.3))*70|0}%"></i>`).join("")}</span><span class="dur">${meta.dur||"0:08"}</span></div>`;
+    } else if (m.kind === "image") {
+      inner = meta.data
+        ? `<a href="${meta.data}" target="_blank" rel="noopener"><img class="media-real" src="${meta.data}" loading="lazy"></a>${meta.caption ? `<div class="txt">${escapeHtml(meta.caption)}</div>` : ""}`
+        : `<div class="media-img"><svg viewBox="0 0 24 24"><path d="M21 19V5a2 2 0 00-2-2H5a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2zM8.5 13.5l2.5 3 3.5-4.5 4.5 6H5l3.5-4.5z"/></svg></div>`;
+    } else if (m.kind === "video") {
+      inner = meta.data
+        ? `<video class="media-real" src="${meta.data}" controls playsinline></video>`
+        : `<div class="media-img"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></div>`;
     } else if (m.kind === "doc") {
-      inner = `<div class="doc-chip"><span class="di"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6z"/></svg></span><span><div class="dn">${escapeHtml(meta.docname||"Document.pdf")}</div><div class="ds">${meta.docsize||"1.0 MB"}</div></span></div>`;
+      inner = `<a class="doc-chip" ${meta.data ? `href="${meta.data}" download="${escapeHtml(meta.docname||'file')}"` : ""}><span class="di"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6z"/></svg></span><span><div class="dn">${escapeHtml(meta.docname||"Document")}</div><div class="ds">${meta.docsize||""}${meta.data ? " · Tap to open" : ""}</div></span></a>`;
     } else if (m.kind === "location") {
-      inner = `<div class="media-img" style="background:linear-gradient(135deg,#10b981,#059669)"><svg viewBox="0 0 24 24"><path d="M12 2a7 7 0 00-7 7c0 5.25 7 13 7 13s7-7.75 7-13a7 7 0 00-7-7zm0 9.5A2.5 2.5 0 1112 6.5a2.5 2.5 0 010 5z"/></svg></div><div class="txt">📍 Shared location</div>`;
+      const href = (meta.lat != null) ? `https://www.google.com/maps?q=${meta.lat},${meta.lng}` : "#";
+      inner = `<a class="loc-link" href="${href}" target="_blank" rel="noopener"><div class="media-img" style="background:linear-gradient(135deg,#10b981,#059669)"><svg viewBox="0 0 24 24"><path d="M12 2a7 7 0 00-7 7c0 5.25 7 13 7 13s7-7.75 7-13a7 7 0 00-7-7zm0 9.5A2.5 2.5 0 1112 6.5a2.5 2.5 0 010 5z"/></svg></div><div class="txt">📍 Location · Tap to open map</div></a>`;
     } else {
       inner = `<div class="txt">${escapeHtml(m.body)}</div>`;
     }
-    return `<div class="bubble ${out ? "out" : "in"}">${inner}${foot}</div>`;
+    return `<div class="bubble ${out ? "out" : "in"}" data-id="${m.id}">${reply}${inner}${foot}</div>`;
   }
+  let currentMsgs = [];   // messages of the open thread
+  let replyTo = null;     // { name, snippet } quoted on the next send
+  let editing = null;     // { id } when editing a message
+
   async function sendMessage(body, kind, meta) {
     if (!activeContact) return;
+    const doc = {
+      pair: pairKey(session.uid, activeContact.id),
+      participants: [session.uid, activeContact.id],
+      from: session.uid, to: activeContact.id,
+      body: body || "", kind: kind || "text", meta: meta || {},
+      read: false, createdAt: f().serverTimestamp(),
+    };
+    if (replyTo) { doc.replyTo = replyTo; clearContext(); }
     try {
-      await f().addDoc(msgsCol(), {
-        pair: pairKey(session.uid, activeContact.id),
-        participants: [session.uid, activeContact.id],
-        from: session.uid, to: activeContact.id,
-        body: body || "", kind: kind || "text", meta: meta || {},
-        read: false, createdAt: f().serverTimestamp(),
-      });
+      await f().addDoc(msgsCol(), doc);
       chime("send");
     } catch (e) { toast("Couldn't send message."); }
   }
@@ -1429,27 +1505,57 @@ img { display: block; max-width: 100%; }
   input.addEventListener("input", () => { input.style.height = "auto"; input.style.height = Math.min(input.scrollHeight, 110) + "px"; updateSendIcon(); });
   input.addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); doSend(); } });
   function doSend() {
-    if (input.value.trim()) { const v = input.value; input.value = ""; input.style.height = "auto"; updateSendIcon(); sendMessage(v.trim(), "text"); }
+    const v = input.value.trim();
+    if (editing) {
+      if (v) editMessage(editing.id, v);
+      input.value = ""; input.style.height = "auto"; updateSendIcon(); clearContext();
+      return;
+    }
+    if (v) { input.value = ""; input.style.height = "auto"; updateSendIcon(); sendMessage(v, "text"); }
     else startRecording();
   }
+  async function editMessage(id, body) {
+    try { await f().updateDoc(f().doc(FB.db, "messages", id), { body, edited: true }); }
+    catch (e) { toast("Couldn't edit message."); }
+  }
   sendBtn.addEventListener("click", () => { if (recording) { stopRecording(true); return; } doSend(); });
-  function startRecording() {
+  async function startRecording() {
     if (recording) return;
+    let stream;
+    try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+    catch (e) { toast("Microphone access needed"); return; }
+    let rec;
+    try { rec = new MediaRecorder(stream); }
+    catch (e) { stream.getTracks().forEach(t => t.stop()); toast("Recording not supported"); return; }
+    const chunks = [];
+    rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
     const composer = $("#composer"), pill = $("#composer-pill"); pill.style.display = "none";
     const bar = document.createElement("div"); bar.className = "rec-bar";
     bar.innerHTML = `<span class="rdot"></span><span class="rtime">0:00</span><span class="rwave">${Array.from({length:40},(_,i)=>`<i style="height:${20+Math.random()*80|0}%;animation-delay:${i*0.05}s"></i>`).join("")}</span><button class="rcancel">Cancel</button>`;
     composer.insertBefore(bar, sendBtn);
     $("#ic-mic").classList.add("hidden"); $("#ic-send").classList.remove("hidden");
     let sec = 0;
-    recording = { seconds: 0, timer: setInterval(() => { sec++; recording.seconds = sec; bar.querySelector(".rtime").textContent = "0:" + String(sec).padStart(2, "0"); }, 1000) };
+    recording = { seconds: 0, stream, rec, chunks, timer: setInterval(() => { sec++; recording.seconds = sec; bar.querySelector(".rtime").textContent = "0:" + String(sec).padStart(2, "0"); }, 1000) };
     bar.querySelector(".rcancel").addEventListener("click", () => stopRecording(false));
+    rec.start();
   }
   function stopRecording(sendIt) {
     if (!recording) return;
-    clearInterval(recording.timer); const secs = recording.seconds; recording = null;
+    const r = recording; recording = null;
+    clearInterval(r.timer);
     const bar = $(".rec-bar"); if (bar) bar.remove();
     $("#composer-pill").style.display = "flex"; updateSendIcon();
-    if (sendIt && secs > 0) sendMessage("", "voice", { dur: "0:" + String(secs).padStart(2, "0") });
+    const secs = r.seconds;
+    const finish = async () => {
+      r.stream.getTracks().forEach(t => t.stop());
+      if (!sendIt || secs < 1) return;
+      const blob = new Blob(r.chunks, { type: r.rec.mimeType || "audio/webm" });
+      if (blob.size > 850000) { toast("Voice note too long (keep under ~1 min)"); return; }
+      const data = await blobToDataURL(blob);
+      sendMessage("", "voice", { dur: "0:" + String(secs).padStart(2, "0"), data });
+    };
+    r.rec.onstop = finish;
+    try { r.rec.stop(); } catch (e) { finish(); }
   }
   function buildEmoji() {
     const tabs = $("#emoji-tabs"), grid = $("#emoji-grid"), cats = Object.keys(EMOJI);
@@ -1466,13 +1572,138 @@ img { display: block; max-width: 100%; }
   function closeSheets() { $("#overlay").classList.remove("open"); $$(".sheet").forEach(s => s.classList.remove("open")); }
   $("#btn-attach").addEventListener("click", () => openSheet($("#attach-sheet")));
   $("#overlay").addEventListener("click", closeSheets);
-  $$("#attach-sheet [data-attach]").forEach(b => b.addEventListener("click", () => {
+  // ---------- media helpers (small files stored as data URLs in Firestore) ----------
+  const MAX_BYTES = 820000; // keep the message doc under Firestore's 1 MB limit
+  function pickFile(accept) {
+    return new Promise(res => {
+      const inp = document.createElement("input");
+      inp.type = "file"; inp.accept = accept; inp.style.display = "none";
+      inp.onchange = () => { res(inp.files && inp.files[0] ? inp.files[0] : null); inp.remove(); };
+      document.body.appendChild(inp); inp.click();
+    });
+  }
+  function fileToDataURL(file) { return new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.onerror = rej; fr.readAsDataURL(file); }); }
+  function blobToDataURL(blob) { return fileToDataURL(blob); }
+  function loadImage(file) { return new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => { const im = new Image(); im.onload = () => res(im); im.onerror = rej; im.src = fr.result; }; fr.onerror = rej; fr.readAsDataURL(file); }); }
+  async function compressImage(file) {
+    const img = await loadImage(file);
+    let w = img.width, h = img.height;
+    const scale = Math.min(1, 1280 / Math.max(w, h));
+    w = Math.round(w * scale); h = Math.round(h * scale);
+    const cv = document.createElement("canvas"); cv.width = w; cv.height = h;
+    cv.getContext("2d").drawImage(img, 0, 0, w, h);
+    let q = 0.72, data = cv.toDataURL("image/jpeg", q);
+    while (data.length > 1000000 && q > 0.3) { q -= 0.12; data = cv.toDataURL("image/jpeg", q); }
+    return data;
+  }
+  function shareLocation() {
+    if (!navigator.geolocation) { toast("Location not supported here"); return; }
+    toast("Getting your location…");
+    navigator.geolocation.getCurrentPosition(
+      pos => sendMessage("", "location", { lat: +pos.coords.latitude.toFixed(6), lng: +pos.coords.longitude.toFixed(6) }),
+      () => toast("Location permission needed"),
+      { enableHighAccuracy: true, timeout: 12000 }
+    );
+  }
+  $$("#attach-sheet [data-attach]").forEach(b => b.addEventListener("click", async () => {
     closeSheets();
-    const kind = b.dataset.attach === "photo" ? "image" : b.dataset.attach;
-    const meta = kind === "doc" ? { docname: "Document-" + (Math.floor(Date.now()/1000)%9000) + ".pdf", docsize: (1 + (Date.now()%40)/10).toFixed(1) + " MB" } : {};
-    toast("Uploading " + b.dataset.attach + "…");
-    setTimeout(() => sendMessage("", kind, meta), 600);
+    const kind = b.dataset.attach;
+    if (kind === "location") { shareLocation(); return; }
+    if (kind === "photo") {
+      const file = await pickFile("image/*"); if (!file) return;
+      toast("Preparing photo…");
+      try { const data = await compressImage(file); sendMessage("", "image", { data }); }
+      catch (e) { toast("Couldn't send photo"); }
+      return;
+    }
+    // video / document: real file, but must fit the free database (~800 KB)
+    const file = await pickFile(kind === "video" ? "video/*" : "*/*"); if (!file) return;
+    if (file.size > MAX_BYTES) { toast((kind === "video" ? "Video" : "File") + " too large for the free plan (max ~800 KB)"); return; }
+    try {
+      const data = await fileToDataURL(file);
+      if (kind === "video") sendMessage("", "video", { data });
+      else sendMessage("", "doc", { data, docname: file.name, docsize: (file.size / 1024).toFixed(0) + " KB" });
+    } catch (e) { toast("Couldn't send file"); }
   }));
+
+  // ============================================================
+  //  Message actions: reply / edit / delete / copy
+  // ============================================================
+  function ctxBar() { return $("#context-bar"); }
+  function clearContext() {
+    replyTo = null; editing = null;
+    const b = ctxBar(); if (b) b.classList.remove("open");
+  }
+  function showContext(title, snippet) {
+    let b = ctxBar();
+    if (!b) {
+      b = document.createElement("div"); b.id = "context-bar"; b.className = "context-bar";
+      $("#composer").parentNode.insertBefore(b, $("#composer"));
+    }
+    b.innerHTML = `<div class="ctx-accent"></div><div class="ctx-body"><div class="ctx-title">${escapeHtml(title)}</div><div class="ctx-snippet">${escapeHtml(snippet)}</div></div><button class="ctx-close" aria-label="Cancel"><svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button>`;
+    b.classList.add("open");
+    b.querySelector(".ctx-close").addEventListener("click", () => {
+      if (editing) { input.value = ""; input.style.height = "auto"; updateSendIcon(); }
+      clearContext();
+    });
+  }
+  function startReply(m) {
+    editing = null;
+    replyTo = { name: m.mine ? "You" : activeContact.name, snippet: msgPreview(m) };
+    showContext("Replying to " + (m.mine ? "yourself" : activeContact.name), msgPreview(m));
+    input.focus();
+  }
+  function startEdit(m) {
+    replyTo = null; editing = { id: m.id };
+    input.value = m.body || ""; input.dispatchEvent(new Event("input"));
+    showContext("Editing message", m.body || "");
+    input.focus();
+  }
+  function deleteMessage(m) {
+    openModal(`<h3>Delete message?</h3><div class="msub">This removes it for everyone in the chat.</div>
+      <div class="modal-actions"><button class="cancel">Cancel</button><button class="confirm" style="background:var(--danger)">Delete</button></div>`,
+      (root) => $(".confirm", root).addEventListener("click", async () => {
+        closeModal();
+        try { await f().updateDoc(f().doc(FB.db, "messages", m.id), { deleted: true, body: "", meta: {} }); }
+        catch (e) { toast("Couldn't delete"); }
+      }));
+  }
+  function openMessageMenu(id) {
+    const m = currentMsgs.find(x => x.id === id); if (!m || m.deleted) return;
+    const canEdit = m.mine && m.kind === "text";
+    const canDelete = m.mine;
+    openModal(`<h3>Message</h3>
+      <div class="msg-menu">
+        <button class="msg-act" data-a="reply"><span class="ma-ic">↩︎</span>Reply</button>
+        ${m.body ? `<button class="msg-act" data-a="copy"><span class="ma-ic">⧉</span>Copy text</button>` : ""}
+        ${canEdit ? `<button class="msg-act" data-a="edit"><span class="ma-ic">✏️</span>Edit</button>` : ""}
+        ${canDelete ? `<button class="msg-act danger" data-a="delete"><span class="ma-ic">🗑</span>Delete</button>` : ""}
+      </div>
+      <div class="modal-actions"><button class="cancel">Cancel</button></div>`,
+      (root) => $$(".msg-act", root).forEach(btn => btn.addEventListener("click", () => {
+        const a = btn.dataset.a; closeModal();
+        if (a === "reply") startReply(m);
+        else if (a === "copy") { copyText(m.body); toast("Copied"); }
+        else if (a === "edit") startEdit(m);
+        else if (a === "delete") deleteMessage(m);
+      })));
+  }
+  function setupMessageInteractions() {
+    const box = $("#messages");
+    if (box._wired) return; box._wired = true;
+    box.addEventListener("click", (e) => {
+      const play = e.target.closest(".voice .play");
+      if (play) {
+        const audio = play.parentElement.querySelector("audio");
+        if (audio) { if (audio.paused) { audio.play(); play.classList.add("playing"); audio.onended = () => play.classList.remove("playing"); } else { audio.pause(); play.classList.remove("playing"); } }
+        return;
+      }
+      if (e.target.closest("a")) return;              // let image/doc/location links open
+      const bubble = e.target.closest(".bubble");
+      if (!bubble || bubble.classList.contains("is-deleted")) return;
+      openMessageMenu(bubble.dataset.id);
+    });
+  }
 
   // ============================================================
   //  Profile (with self-service password change)
@@ -1680,10 +1911,11 @@ img { display: block; max-width: 100%; }
     $("#btn-admin-enter").addEventListener("click", openAdmin);
     $("#admin-enter-row").addEventListener("click", openAdmin);
     $("#admin-back").addEventListener("click", () => show("screen-chats", { back: true }));
-    $("#chat-back").addEventListener("click", () => { closeEmoji(); if (recording) stopRecording(false); stopThreadListener(); activeContact = null; show("screen-chats", { back: true }); });
+    $("#chat-back").addEventListener("click", () => { closeEmoji(); if (recording) stopRecording(false); clearContext(); input.value = ""; input.style.height = "auto"; updateSendIcon(); stopThreadListener(); activeContact = null; show("screen-chats", { back: true }); });
     $("#btn-voice-call").addEventListener("click", () => { if (activeContact) startCall(activeContact, "audio"); });
     $("#btn-video-call").addEventListener("click", () => { if (activeContact) startCall(activeContact, "video"); });
     bindCallControls();
+    setupMessageInteractions();
     $("#btn-logout").addEventListener("click", () => {
       openModal(`<h3>Log out?</h3><div class="msub">Your session will end and you'll return to the login screen.</div><div class="modal-actions"><button class="cancel">Cancel</button><button class="confirm" style="background:var(--danger)">Log out</button></div>`,
         (root) => $(".confirm", root).addEventListener("click", () => { closeModal(); logout(); }));
