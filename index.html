@@ -5,7 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
 <meta name="theme-color" content="#0b141a" />
 <title>NexusChat</title>
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="NexusChat" />
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💬</text></svg>" />
+<link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%230b141a'/><text x='50' y='52' font-size='58' text-anchor='middle' dominant-baseline='central'>💬</text></svg>" />
 <style>
 /* ============================================================
    NexusChat — self-contained styles.
@@ -826,6 +831,31 @@ video.media-real { max-height: 300px; }
 .msg-act:active { background: var(--card-2); }
 .msg-act .ma-ic { width: 22px; text-align: center; font-size: 17px; }
 .msg-act.danger { color: var(--danger); }
+.react-row { display: flex; justify-content: space-around; gap: 4px; padding: 8px 4px 10px; margin-bottom: 4px; border-bottom: 1px solid var(--border); }
+.react-btn { font-size: 28px; padding: 6px 8px; border-radius: 12px; transition: transform .12s, background .12s; }
+.react-btn:active { transform: scale(1.3); background: var(--card-2); }
+.bubble .reactions {
+  position: absolute; bottom: -12px; right: 8px;
+  background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+  padding: 1px 6px; font-size: 13px; line-height: 1.5; box-shadow: var(--shadow);
+  display: flex; align-items: center; gap: 1px; white-space: nowrap;
+}
+.bubble .reactions b { font-size: 11px; color: var(--text-dim); font-weight: 600; margin-left: 1px; }
+.bubble { position: relative; margin-bottom: 3px; }
+
+.lightbox {
+  position: absolute; inset: 0; z-index: 95; background: rgba(0,0,0,.94);
+  display: none; align-items: center; justify-content: center; padding: 20px;
+  padding-top: calc(20px + var(--safe-top));
+}
+.lightbox.open { display: flex; animation: rise .2s ease; }
+.lightbox img { max-width: 100%; max-height: 100%; border-radius: 8px; object-fit: contain; }
+.lightbox-close {
+  position: absolute; top: calc(14px + var(--safe-top)); right: 14px;
+  width: 44px; height: 44px; border-radius: 50%; background: rgba(255,255,255,.15);
+  display: grid; place-items: center; color: #fff; z-index: 2;
+}
+.lightbox-close svg { width: 24px; height: 24px; fill: #fff; }
 
 .hidden { display: none !important; }
 </style>
@@ -929,10 +959,10 @@ video.media-real { max-height: 300px; }
           <div class="li-body"><div class="li-t">Display name</div><div class="li-s" id="profile-name-text">—</div></div>
           <div class="li-r"><svg viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 000-1.41l-2.34-2.34a1 1 0 00-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg></div>
         </div>
-        <div class="list-item">
+        <div class="list-item" id="edit-username">
           <div class="li-ico" style="background:#8b5cf6"><svg viewBox="0 0 24 24"><path d="M20 6h-3V4a2 2 0 00-2-2H9a2 2 0 00-2 2v2H4a2 2 0 00-2 2v11a2 2 0 002 2h16a2 2 0 002-2V8a2 2 0 00-2-2zM9 4h6v2H9V4z"/></svg></div>
-          <div class="li-body"><div class="li-t">Username</div><div class="li-s" id="profile-username-locked">— (assigned by admin, locked)</div></div>
-          <div class="li-r"><svg viewBox="0 0 24 24"><path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V10a2 2 0 00-2-2zM9 6c0-1.66 1.34-3 3-3s3 1.34 3 3v2H9V6z"/></svg></div>
+          <div class="li-body"><div class="li-t">Username</div><div class="li-s" id="profile-username-locked">—</div></div>
+          <div class="li-r"><svg viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 000-1.41l-2.34-2.34a1 1 0 00-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg></div>
         </div>
       </div>
     </div>
@@ -1080,6 +1110,12 @@ video.media-real { max-height: 300px; }
         <button class="inc-btn inc-accept" id="inc-accept"><svg viewBox="0 0 24 24"><path d="M6.62 10.79c1.44 2.83 3.76 5.14 6.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57a1 1 0 011 1V20a1 1 0 01-1 1A17 17 0 013 4a1 1 0 011-1h3.5a1 1 0 011 1c0 1.25.2 2.45.57 3.57.11.35.03.74-.25 1.02l-2.2 2.2z"/></svg></button>
       </div>
     </div>
+  </div>
+
+  <!-- image viewer -->
+  <div class="lightbox" id="lightbox">
+    <button class="lightbox-close" id="lightbox-close" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button>
+    <img id="lightbox-img" alt="" />
   </div>
 
   <!-- toast -->
@@ -1457,7 +1493,7 @@ video.media-real { max-height: 300px; }
           id: d.id, mine: m.from === session.uid, body: m.body, kind: m.kind, meta: m.meta || {},
           created_at: tsMillis(m.createdAt),
           status: m.from === session.uid ? (m.read ? "read" : "delivered") : "in",
-          replyTo: m.replyTo || null, edited: !!m.edited, deleted: !!m.deleted,
+          replyTo: m.replyTo || null, edited: !!m.edited, deleted: !!m.deleted, reactions: m.reactions || {},
         });
       });
       msgs.sort((a, b) => a.created_at - b.created_at);
@@ -1508,7 +1544,7 @@ video.media-real { max-height: 300px; }
       inner = `<div class="voice">${meta.data ? `<audio src="${meta.data}" preload="none"></audio>` : ""}<span class="play"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></span><span class="wave">${Array.from({length:22},(_,i)=>`<i style="height:${20+Math.abs(Math.sin(i*1.3))*70|0}%"></i>`).join("")}</span><span class="dur">${meta.dur||"0:08"}</span></div>`;
     } else if (m.kind === "image") {
       inner = meta.data
-        ? `<a href="${meta.data}" target="_blank" rel="noopener"><img class="media-real" src="${meta.data}" loading="lazy"></a>${meta.caption ? `<div class="txt">${escapeHtml(meta.caption)}</div>` : ""}`
+        ? `<img class="media-real" src="${meta.data}" loading="lazy">${meta.caption ? `<div class="txt">${escapeHtml(meta.caption)}</div>` : ""}`
         : `<div class="media-img"><svg viewBox="0 0 24 24"><path d="M21 19V5a2 2 0 00-2-2H5a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2zM8.5 13.5l2.5 3 3.5-4.5 4.5 6H5l3.5-4.5z"/></svg></div>`;
     } else if (m.kind === "video") {
       inner = meta.data
@@ -1522,7 +1558,9 @@ video.media-real { max-height: 300px; }
     } else {
       inner = `<div class="txt">${escapeHtml(m.body)}</div>`;
     }
-    return `<div class="bubble ${out ? "out" : "in"}" data-id="${m.id}">${reply}${inner}${foot}</div>`;
+    const rk = m.reactions ? Object.values(m.reactions) : [];
+    const reactChip = rk.length ? `<div class="reactions">${[...new Set(rk)].join("")}${rk.length > 1 ? `<b>${rk.length}</b>` : ""}</div>` : "";
+    return `<div class="bubble ${out ? "out" : "in"}" data-id="${m.id}">${reply}${inner}${foot}${reactChip}</div>`;
   }
   let currentMsgs = [];   // messages of the open thread
   let replyTo = null;     // { name, snippet } quoted on the next send
@@ -1721,10 +1759,18 @@ video.media-real { max-height: 300px; }
       <div class="modal-actions"><button class="cancel">Cancel</button><button class="confirm" style="background:var(--danger)">Delete</button></div>`,
       (root) => $(".confirm", root).addEventListener("click", () => { closeModal(); deleteForEveryone(m); }));
   }
+  async function toggleReaction(m, emoji) {
+    const mine = (m.reactions || {})[session.uid];
+    try {
+      const ref = f().doc(FB.db, "messages", m.id);
+      await f().updateDoc(ref, { ["reactions." + session.uid]: mine === emoji ? f().deleteField() : emoji });
+    } catch (e) { toast("Couldn't react"); }
+  }
   function openMessageMenu(id) {
     const m = currentMsgs.find(x => x.id === id); if (!m || m.deleted) return;
     const canEdit = m.mine && m.kind === "text";
     openModal(`<h3>Message</h3>
+      <div class="react-row">${["👍","❤️","😂","😮","😢","🙏"].map(e => `<button class="react-btn" data-r="${e}">${e}</button>`).join("")}</div>
       <div class="msg-menu">
         <button class="msg-act" data-a="reply"><span class="ma-ic">↩︎</span>Reply</button>
         ${m.body ? `<button class="msg-act" data-a="copy"><span class="ma-ic">⧉</span>Copy text</button>` : ""}
@@ -1733,30 +1779,55 @@ video.media-real { max-height: 300px; }
         ${m.mine ? `<button class="msg-act danger" data-a="delall"><span class="ma-ic">🗑</span>Delete for everyone</button>` : ""}
       </div>
       <div class="modal-actions"><button class="cancel">Cancel</button></div>`,
-      (root) => $$(".msg-act", root).forEach(btn => btn.addEventListener("click", () => {
-        const a = btn.dataset.a; closeModal();
-        if (a === "reply") startReply(m);
-        else if (a === "copy") { copyText(m.body); toast("Copied"); }
-        else if (a === "edit") startEdit(m);
-        else if (a === "delme") deleteForMe(m);
-        else if (a === "delall") confirmDeleteEveryone(m);
-      })));
+      (root) => {
+        $$(".react-btn", root).forEach(btn => btn.addEventListener("click", () => { closeModal(); toggleReaction(m, btn.dataset.r); }));
+        $$(".msg-act", root).forEach(btn => btn.addEventListener("click", () => {
+          const a = btn.dataset.a; closeModal();
+          if (a === "reply") startReply(m);
+          else if (a === "copy") { copyText(m.body); toast("Copied"); }
+          else if (a === "edit") startEdit(m);
+          else if (a === "delme") deleteForMe(m);
+          else if (a === "delall") confirmDeleteEveryone(m);
+        }));
+      });
   }
+  function openLightbox(src) { $("#lightbox-img").src = src; $("#lightbox").classList.add("open"); }
+  function closeLightbox() { $("#lightbox").classList.remove("open"); $("#lightbox-img").src = ""; }
   function setupMessageInteractions() {
     const box = $("#messages");
     if (box._wired) return; box._wired = true;
+    // Long-press (pointer) opens the action menu on ANY message, media included.
+    let lpTimer = null, lpFired = false;
+    const clearLp = () => { if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; } };
+    box.addEventListener("pointerdown", (e) => {
+      const bubble = e.target.closest(".bubble");
+      if (!bubble || bubble.classList.contains("is-deleted")) return;
+      lpFired = false; clearLp();
+      const id = bubble.dataset.id;
+      lpTimer = setTimeout(() => { lpFired = true; lpTimer = null; openMessageMenu(id); }, 480);
+    });
+    box.addEventListener("pointermove", clearLp);
+    box.addEventListener("pointerup", clearLp);
+    box.addEventListener("pointercancel", clearLp);
+    box.addEventListener("contextmenu", (e) => { if (e.target.closest(".bubble")) e.preventDefault(); });
     box.addEventListener("click", (e) => {
+      if (lpFired) { lpFired = false; e.preventDefault(); e.stopPropagation(); return; }
       const play = e.target.closest(".voice .play");
       if (play) {
         const audio = play.parentElement.querySelector("audio");
         if (audio) { if (audio.paused) { audio.play(); play.classList.add("playing"); audio.onended = () => play.classList.remove("playing"); } else { audio.pause(); play.classList.remove("playing"); } }
         return;
       }
-      if (e.target.closest("a")) return;              // let image/doc/location links open
+      const img = e.target.closest("img.media-real");
+      if (img) { openLightbox(img.src); return; }       // in-app viewer, never a data: URL tab
+      if (e.target.closest("video")) return;            // let the video player handle taps
+      if (e.target.closest("a")) return;                // doc download / location map link
       const bubble = e.target.closest(".bubble");
       if (!bubble || bubble.classList.contains("is-deleted")) return;
-      openMessageMenu(bubble.dataset.id);
+      openMessageMenu(bubble.dataset.id);               // tap text → menu (discoverable)
     });
+    const lb = $("#lightbox");
+    if (lb) { lb.addEventListener("click", closeLightbox); }
   }
 
   // ============================================================
@@ -1772,11 +1843,36 @@ video.media-real { max-height: 300px; }
     $("#profile-username").textContent = "@" + u.username;
     $("#profile-status-text").textContent = u.bio || "Available";
     $("#profile-name-text").textContent = u.name;
-    $("#profile-username-locked").textContent = "@" + u.username + " (assigned by admin, locked)";
+    $("#profile-username-locked").textContent = "@" + u.username;
     if (!$("#btn-change-avatar")) a.insertAdjacentHTML("beforeend", `<button class="cam" id="btn-change-avatar"><svg viewBox="0 0 24 24"><path d="M12 15.2A3.2 3.2 0 1012 8.8a3.2 3.2 0 000 6.4zM9 2L7.17 4H4a2 2 0 00-2 2v12a2 2 0 002 2h16a2 2 0 002-2V6a2 2 0 00-2-2h-3.17L15 2H9z"/></svg></button>`);
     $("#btn-change-avatar").onclick = (e) => { e.stopPropagation(); openAvatarPicker(); };
     $("#edit-status").onclick = () => openEditModal("status");
     $("#edit-name").onclick = () => openEditModal("name");
+    $("#edit-username").onclick = () => openUsernameModal();
+  }
+  function openUsernameModal() {
+    const cur = session.user.username;
+    openModal(`<h3>Change username</h3><div class="msub">This is also your login ID. Choose a unique one.</div>
+      <div class="field"><label>Username</label><input class="text-input-full" id="uname" value="${escapeHtml(cur)}" autocapitalize="off" spellcheck="false" /></div>
+      <div class="login-error" id="uname-err"></div>
+      <div class="modal-actions"><button class="cancel">Cancel</button><button class="confirm">Save</button></div>`,
+      (root) => $(".confirm", root).addEventListener("click", async () => {
+        const nu = $("#uname", root).value.trim().toLowerCase().replace(/\s+/g, "");
+        const err = $("#uname-err", root);
+        if (nu.length < 3) { err.textContent = "At least 3 characters, no spaces."; return; }
+        if (nu === cur) { closeModal(); return; }
+        const btn = $(".confirm", root); btn.disabled = true; btn.textContent = "Saving…";
+        try {
+          await FB.authMod.updateEmail(FB.auth.currentUser, nu + "@" + EMAIL_DOMAIN);
+          await f().updateDoc(uref(session.uid), { username: nu });
+          session.user.username = nu; closeModal(); renderProfile(); toast("Username updated");
+        } catch (e) {
+          btn.disabled = false; btn.textContent = "Save";
+          err.textContent = e.code === "auth/email-already-in-use" ? "That username is taken."
+            : e.code === "auth/requires-recent-login" ? "Please log out and back in, then try again."
+            : "Couldn't change username.";
+        }
+      }));
   }
   async function saveProfile(patch) {
     try {
@@ -1892,6 +1988,7 @@ video.media-real { max-height: 300px; }
           <div class="uc-user">@${escapeHtml(u.username)} · <span class="pill-status ${u.status}">${u.status}</span></div>
         </div>
         <div class="uc-actions">
+          <button data-act="edit" title="Edit name"><svg viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 000-1.41l-2.34-2.34a1 1 0 00-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg></button>
           <button data-act="copy" title="Copy login note"><svg viewBox="0 0 24 24"><path d="M16 1H4a2 2 0 00-2 2v14h2V3h12V1zm3 4H8a2 2 0 00-2 2v14a2 2 0 002 2h11a2 2 0 002-2V7a2 2 0 00-2-2zm0 16H8V7h11v14z"/></svg></button>
           <button data-act="toggle" class="${u.status==='active'?'danger':''}" title="${u.status==='active'?'Revoke':'Restore'}">${u.status==='active'?'<svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 100 20 10 10 0 000-20zm0 18a8 8 0 01-6.32-12.9L16.9 18.32A7.95 7.95 0 0112 20zm6.32-3.1L7.1 5.68A8 8 0 0118.32 16.9z"/></svg>':'<svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>'}</button>
         </div>
@@ -1902,6 +1999,16 @@ video.media-real { max-height: 300px; }
   async function adminAction(act, uid) {
     const u = adminById(uid); if (!u) return;
     if (act === "copy") { copyText(credSnippet(u)); toast("Login note copied"); }
+    else if (act === "edit") {
+      openModal(`<h3>Edit user</h3><div class="msub">Update <b>@${escapeHtml(u.username)}</b>'s display name.</div>
+        <div class="field"><label>Display name</label><input class="text-input-full" id="en" maxlength="30" value="${escapeHtml(u.name)}" /></div>
+        <div class="modal-actions"><button class="cancel">Cancel</button><button class="confirm">Save</button></div>`,
+        (root) => $(".confirm", root).addEventListener("click", async () => {
+          const v = $("#en", root).value.trim(); if (!v) return;
+          try { await f().updateDoc(uref(uid), { name: v }); closeModal(); renderAdmin(); toast("User updated"); }
+          catch (e) { toast("Update failed"); }
+        }));
+    }
     else if (act === "toggle") {
       if (u.role === "admin") { toast("Cannot change an admin account"); return; }
       try { await f().updateDoc(uref(uid), { status: u.status === "active" ? "revoked" : "active" }); toast(u.status === "active" ? "Access revoked" : "Access restored"); renderAdmin(); }
