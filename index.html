@@ -1143,6 +1143,7 @@ video.media-real { max-height: 300px; }
 };
   const EMAIL_DOMAIN = "nexuschat.app";              // username -> username@nexuschat.app
   const ADMIN_EMAIL = "admin@" + EMAIL_DOMAIN;
+  const APPCHECK_SITE_KEY = "6LdaB1YtAAAAAP1lZLyEhub-p3i15iy1UYNw2XLJ"; // reCAPTCHA Enterprise (public)
 
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
@@ -1289,9 +1290,18 @@ video.media-real { max-height: 300px; }
   // ============================================================
   async function loadFirebase() {
     const appMod  = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js");
+    const acMod   = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-app-check.js");
     const authMod = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js");
     const fsMod   = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js");
     const app = appMod.initializeApp(FIREBASE_CONFIG);
+    // App Check: attests requests come from the genuine app (reCAPTCHA Enterprise).
+    // Must run before any Firestore/Auth traffic.
+    try {
+      acMod.initializeAppCheck(app, {
+        provider: new acMod.ReCaptchaEnterpriseProvider(APPCHECK_SITE_KEY),
+        isTokenAutoRefreshEnabled: true,
+      });
+    } catch (e) { console.warn("App Check init failed", e); }
     FB = {
       app, appMod, authMod, fsMod,
       auth: authMod.getAuth(app),
