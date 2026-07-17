@@ -1645,7 +1645,7 @@ video.media-real { max-height: 300px; }
     if (replyTo) { doc.replyTo = replyTo; clearContext(); }
     try {
       await f().addDoc(msgsCol(), doc);
-      chime("send"); clearTyping();
+      clearTyping();
     } catch (e) { toast("Couldn't send message."); }
   }
 
