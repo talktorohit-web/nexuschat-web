@@ -1015,11 +1015,6 @@ video.media-real { max-height: 300px; }
       </div>
       <div class="list-section">
         <div class="lbl">Preferences</div>
-        <div class="list-item" id="toggle-sound-row">
-          <div class="li-ico" style="background:#10b981"><svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3A4.5 4.5 0 0014 7.97v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/></svg></div>
-          <div class="li-body"><div class="li-t">Message sounds</div><div class="li-s">Chime on send &amp; receive</div></div>
-          <div class="switch on" id="switch-sound"></div>
-        </div>
         <div class="list-item" id="toggle-read-row">
           <div class="li-ico" style="background:#06b6d4"><svg viewBox="0 0 24 24"><path d="M18 7l-1.41-1.41-6.34 6.34 1.41 1.41L18 7zm4.24-1.41L11.66 16.17 7.48 12l-1.41 1.41L11.66 19l12-12-1.42-1.41zM.41 13.41L6 19l1.41-1.41L1.83 12 .41 13.41z"/></svg></div>
           <div class="li-body"><div class="li-t">Read receipts</div><div class="li-s">Send blue ticks when read</div></div>
@@ -2263,9 +2258,7 @@ video.media-real { max-height: 300px; }
       openModal(`<h3>Log out?</h3><div class="msub">Your session will end and you'll return to the login screen.</div><div class="modal-actions"><button class="cancel">Cancel</button><button class="confirm" style="background:var(--danger)">Log out</button></div>`,
         (root) => $(".confirm", root).addEventListener("click", () => { closeModal(); logout(); }));
     });
-    bindSwitch($("#switch-sound"), "sound");
     bindSwitch($("#switch-read"), "readReceipts");
-    $("#toggle-sound-row").addEventListener("click", e => { if (!e.target.closest(".switch")) $("#switch-sound").click(); });
     $("#toggle-read-row").addEventListener("click", e => { if (!e.target.closest(".switch")) $("#switch-read").click(); });
 
     // Add a "Change password" row into the profile About section.
