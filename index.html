@@ -844,6 +844,25 @@ video.media-real { max-height: 300px; }
 .reply-quote .rq-name { font-size: 12px; font-weight: 700; color: var(--accent); margin-bottom: 1px; }
 .bubble.out .reply-quote .rq-name { color: color-mix(in srgb, var(--bubble-out-text) 80%, transparent); }
 .reply-quote .rq-text { font-size: 13px; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.reply-quote.tappable { cursor: pointer; }
+.reply-quote.tappable:active { filter: brightness(1.08); }
+
+/* Load-earlier button (windowed history) */
+.load-earlier {
+  align-self: center; margin: 6px 0 10px; display: inline-flex; align-items: center; gap: 6px;
+  background: var(--card); color: var(--text-dim); box-shadow: var(--shadow);
+  font-size: 13px; font-weight: 600; padding: 7px 14px; border-radius: 20px;
+}
+.load-earlier svg { width: 16px; height: 16px; fill: currentColor; }
+.load-earlier:active { transform: scale(.96); }
+
+/* Flash a message when you jump to it from a reply */
+@keyframes bubbleFlash {
+  0%, 100% { box-shadow: var(--shadow); }
+  25%, 60% { box-shadow: 0 0 0 3px var(--accent); }
+}
+.bubble.flash { animation: bubbleFlash 1.4s ease; }
+@media (prefers-reduced-motion: reduce) { .bubble.flash { animation: none; box-shadow: 0 0 0 3px var(--accent); } }
 
 .context-bar {
   flex-shrink: 0; display: none; align-items: center; gap: 10px;
@@ -1515,6 +1534,7 @@ video.media-real { max-height: 300px; }
     closeEmoji();
     const _mb = $("#messages");
     _mb.innerHTML = ""; _mb._lastCount = 0; _mb._newCount = 0;
+    msgHiddenCount = 0; threadFirstRender = true; loadingEarlier = false;
     $("#jump-latest").hidden = true; $("#jl-badge").hidden = true; $("#jl-badge").textContent = "";
     closeChatSearch();
     show("screen-chat");
@@ -1545,7 +1565,13 @@ video.media-real { max-height: 300px; }
       });
       msgs.sort((a, b) => a.created_at - b.created_at);
       currentMsgs = msgs;
-      renderMessages(msgs);
+      if (threadFirstRender) {
+        msgHiddenCount = Math.max(0, msgs.length - initialWindowSize(msgs));
+        threadFirstRender = false;
+      } else {
+        msgHiddenCount = Math.min(msgHiddenCount, Math.max(0, msgs.length - 1));
+      }
+      renderMessages();
       // mark their messages as read
       for (const id of toMarkRead) { try { await f().updateDoc(f().doc(FB.db, "messages", id), { read: true }); } catch (e) {} }
     }, (err) => { console.warn("thread listener", err); toast("Couldn't load messages."); });
@@ -1557,12 +1583,15 @@ video.media-real { max-height: 300px; }
     if (d.toDateString() === y.toDateString()) return "Yesterday";
     return d.toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" });
   }
-  function renderMessages(msgs) {
+  function renderMessages() {
     const box = $("#messages");
+    const msgs = currentMsgs;
     const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
     const prevCount = box._lastCount || 0;
+    const view = msgHiddenCount > 0 ? msgs.slice(msgHiddenCount) : msgs;
     let html = "", lastDay = "";
-    msgs.forEach(m => {
+    if (msgHiddenCount > 0) html = `<button class="load-earlier" id="load-earlier"><svg viewBox="0 0 24 24"><path d="M7 14l5-5 5 5z"/></svg>Load earlier messages</button>`;
+    view.forEach(m => {
       const day = new Date(m.created_at).toDateString();
       if (day !== lastDay) { lastDay = day; html += `<div class="day-sep"><span>${daySepLabel(m.created_at)}</span></div>`; }
       html += renderBubble(m);
@@ -1600,7 +1629,7 @@ video.media-real { max-height: 300px; }
       return `<div class="bubble ${out ? "out" : "in"} is-deleted" data-id="${m.id}"><div class="txt deleted">🚫 ${out ? "You deleted this message" : "This message was deleted"}</div><span class="foot">${fmtTime(m.created_at)}</span></div>`;
     }
     const foot = `<span class="foot">${m.edited ? '<span class="edited">edited</span> ' : ""}${fmtTime(m.created_at)}${out ? tickSVG(m.status) : ""}</span>`;
-    const reply = m.replyTo ? `<div class="reply-quote"><div class="rq-name">${escapeHtml(m.replyTo.name || "")}</div><div class="rq-text">${escapeHtml(m.replyTo.snippet || "")}</div></div>` : "";
+    const reply = m.replyTo ? `<div class="reply-quote${m.replyTo.id ? " tappable" : ""}"${m.replyTo.id ? ` data-reply-to="${m.replyTo.id}"` : ""}><div class="rq-name">${escapeHtml(m.replyTo.name || "")}</div><div class="rq-text">${escapeHtml(m.replyTo.snippet || "")}</div></div>` : "";
     let inner = "";
     if (m.kind === "voice") {
       inner = `<div class="voice">${meta.data ? `<audio src="${meta.data}" preload="none"></audio>` : ""}<span class="play"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></span><span class="wave">${Array.from({length:22},(_,i)=>`<i style="height:${20+Math.abs(Math.sin(i*1.3))*70|0}%"></i>`).join("")}</span><span class="dur">${meta.dur||"0:08"}</span></div>`;
@@ -1624,9 +1653,49 @@ video.media-real { max-height: 300px; }
     const reactChip = rk.length ? `<div class="reactions">${[...new Set(rk)].join("")}${rk.length > 1 ? `<b>${rk.length}</b>` : ""}</div>` : "";
     return `<div class="bubble ${out ? "out" : "in"}" data-id="${m.id}">${reply}${inner}${foot}${reactChip}</div>`;
   }
-  let currentMsgs = [];   // messages of the open thread
-  let replyTo = null;     // { name, snippet } quoted on the next send
+  let currentMsgs = [];   // messages of the open thread (full history, client-side)
+  let replyTo = null;     // { id, name, snippet } quoted on the next send
   let editing = null;     // { id } when editing a message
+  // Windowed rendering: only the most-recent slice is painted to the DOM so long
+  // conversations don't hang. Older messages load on demand (scroll up / button).
+  let msgHiddenCount = 0;     // number of oldest messages currently NOT rendered
+  let threadFirstRender = true;
+  let loadingEarlier = false;
+  const EARLIER_PAGE = 30;    // how many older messages each "load earlier" reveals
+  function initialWindowSize(msgs) {
+    // Show today's messages (they sit at the tail since sorted ascending),
+    // but always at least a small buffer so the thread isn't empty.
+    const startToday = new Date(); startToday.setHours(0, 0, 0, 0);
+    const t0 = startToday.getTime();
+    let todayCount = 0;
+    for (let i = msgs.length - 1; i >= 0; i--) { if (msgs[i].created_at >= t0) todayCount++; else break; }
+    return Math.min(msgs.length, Math.max(todayCount, 15));
+  }
+  function loadEarlier() {
+    if (loadingEarlier || msgHiddenCount <= 0) return;
+    loadingEarlier = true;
+    const box = $("#messages");
+    const prevH = box.scrollHeight, prevTop = box.scrollTop;
+    msgHiddenCount = Math.max(0, msgHiddenCount - EARLIER_PAGE);
+    renderMessages();
+    box.scrollTop = prevTop + (box.scrollHeight - prevH);  // keep the viewport steady
+    loadingEarlier = false;
+  }
+  function jumpToMessage(id) {
+    if (!id) { toast("Original message unavailable"); return; }
+    let el = document.querySelector(`#messages .bubble[data-id="${id}"]`);
+    if (!el) {
+      // The referenced message is older than the loaded window — reveal all, then find it.
+      const idx = currentMsgs.findIndex(m => m.id === id);
+      if (idx === -1) { toast("Original message unavailable"); return; }
+      msgHiddenCount = 0; renderMessages();
+      el = document.querySelector(`#messages .bubble[data-id="${id}"]`);
+    }
+    if (!el) { toast("Original message unavailable"); return; }
+    el.scrollIntoView({ block: "center", behavior: "smooth" });
+    el.classList.remove("flash"); void el.offsetWidth; el.classList.add("flash");
+    setTimeout(() => el.classList.remove("flash"), 1400);
+  }
 
   async function sendMessage(body, kind, meta) {
     if (!activeContact) return;
@@ -1798,7 +1867,7 @@ video.media-real { max-height: 300px; }
   }
   function startReply(m) {
     editing = null;
-    replyTo = { name: m.mine ? "You" : activeContact.name, snippet: msgPreview(m) };
+    replyTo = { id: m.id, name: m.mine ? "You" : activeContact.name, snippet: msgPreview(m) };
     showContext("Replying to " + (m.mine ? "yourself" : activeContact.name), msgPreview(m));
     input.focus();
   }
@@ -1919,7 +1988,11 @@ video.media-real { max-height: 300px; }
     searchIdx = (searchIdx + delta + searchMatches.length) % searchMatches.length;
     setSearchCurrent();
   }
-  function openChatSearch() { $("#chat-search-bar").hidden = false; $("#chat-search-input").focus(); }
+  function openChatSearch() {
+    // Reveal the full history so search spans the whole conversation, not just today's window.
+    if (msgHiddenCount > 0) { msgHiddenCount = 0; renderMessages(); }
+    $("#chat-search-bar").hidden = false; $("#chat-search-input").focus();
+  }
   function closeChatSearch() {
     $("#chat-search-input").value = ""; unwrapSearchMarks();
     searchMatches = []; searchIdx = -1; $("#chat-search-count").textContent = "";
@@ -1956,6 +2029,9 @@ video.media-real { max-height: 300px; }
     box.addEventListener("contextmenu", (e) => { if (e.target.closest(".bubble")) e.preventDefault(); });
     box.addEventListener("click", (e) => {
       if (lpFired) { lpFired = false; e.preventDefault(); e.stopPropagation(); return; }
+      if (e.target.closest("#load-earlier")) { loadEarlier(); return; }
+      const rq = e.target.closest(".reply-quote.tappable");
+      if (rq) { jumpToMessage(rq.dataset.replyTo); return; }   // tap a reply → go to the original
       const play = e.target.closest(".voice .play");
       if (play) {
         const audio = play.parentElement.querySelector("audio");
@@ -1983,8 +2059,11 @@ video.media-real { max-height: 300px; }
       if (e.key === "Enter") { e.preventDefault(); gotoMatch(e.shiftKey ? -1 : 1); }
       else if (e.key === "Escape") { closeChatSearch(); }
     });
-    // Jump-to-latest
-    box.addEventListener("scroll", updateJumpBtn, { passive: true });
+    // Jump-to-latest + load-earlier-on-scroll-up
+    box.addEventListener("scroll", () => {
+      updateJumpBtn();
+      if (box.scrollTop < 80 && msgHiddenCount > 0 && !loadingEarlier) loadEarlier();
+    }, { passive: true });
     $("#jump-latest").addEventListener("click", () => scrollMessagesToEnd(true));
   }
 
