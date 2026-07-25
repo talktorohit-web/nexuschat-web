@@ -856,6 +856,15 @@ video.media-real { max-height: 300px; }
 .load-earlier svg { width: 16px; height: 16px; fill: currentColor; }
 .load-earlier:active { transform: scale(.96); }
 
+.e2e-note {
+  align-self: center; margin: 8px 6px 4px; display: inline-flex; align-items: center; gap: 6px;
+  max-width: 90%; text-align: center;
+  background: color-mix(in srgb, var(--accent) 14%, var(--card));
+  color: var(--text-dim); font-size: 12px; font-weight: 500;
+  padding: 6px 12px; border-radius: 10px; box-shadow: var(--shadow);
+}
+.e2e-note svg { width: 13px; height: 13px; fill: var(--accent); flex-shrink: 0; }
+
 /* Flash a message when you jump to it from a reply */
 @keyframes bubbleFlash {
   0%, 100% { box-shadow: var(--shadow); }
@@ -1348,6 +1357,107 @@ video.media-real { max-height: 300px; }
   const tsMillis = (v) => (v && typeof v.toMillis === "function") ? v.toMillis() : (typeof v === "number" ? v : Date.now());
 
   // ============================================================
+  //  End-to-end encryption (ECDH P-256 + AES-GCM; keys never leave the device
+  //  in usable form — the server only ever stores ciphertext + wrapped keys).
+  // ============================================================
+  let myPrivKey = null;        // CryptoKey (ECDH private) — memory only
+  let myPubB64 = null;
+  let recoveryPubKey = null;   // CryptoKey (admin recovery public)
+  const convKeyCache = {};     // contactUid -> AES-GCM CryptoKey
+  const _b64 = (buf) => { const b = new Uint8Array(buf); let s = ""; for (let i = 0; i < b.length; i += 0x8000) s += String.fromCharCode.apply(null, b.subarray(i, i + 0x8000)); return btoa(s); };
+  const _unb64 = (str) => { const bin = atob(str); const b = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) b[i] = bin.charCodeAt(i); return b; };
+  const _sc = () => crypto.subtle;
+  async function e2eGenKeys() { return _sc().generateKey({ name: "ECDH", namedCurve: "P-256" }, true, ["deriveKey", "deriveBits"]); }
+  async function e2eExportPub(k) { return _b64(await _sc().exportKey("spki", k)); }
+  async function e2eImportPub(s) { return _sc().importKey("spki", _unb64(s), { name: "ECDH", namedCurve: "P-256" }, true, []); }
+  async function e2eDeriveWrap(password, salt) {
+    const base = await _sc().importKey("raw", new TextEncoder().encode(password), "PBKDF2", false, ["deriveKey"]);
+    return _sc().deriveKey({ name: "PBKDF2", salt, iterations: 210000, hash: "SHA-256" }, base, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
+  }
+  async function e2eWrapPw(priv, password) {
+    const salt = crypto.getRandomValues(new Uint8Array(16)), iv = crypto.getRandomValues(new Uint8Array(12));
+    const key = await e2eDeriveWrap(password, salt);
+    const ct = await _sc().encrypt({ name: "AES-GCM", iv }, key, await _sc().exportKey("pkcs8", priv));
+    return { enc: _b64(ct), iv: _b64(iv), salt: _b64(salt) };
+  }
+  async function e2eUnwrapPw(blob, password) {
+    const key = await e2eDeriveWrap(password, _unb64(blob.salt));
+    const pkcs8 = await _sc().decrypt({ name: "AES-GCM", iv: _unb64(blob.iv) }, key, _unb64(blob.enc));
+    return _sc().importKey("pkcs8", pkcs8, { name: "ECDH", namedCurve: "P-256" }, true, ["deriveKey", "deriveBits"]);
+  }
+  async function e2eEscrow(priv, recPub) {   // ECIES-style wrap to the admin recovery public key
+    const eph = await e2eGenKeys(), iv = crypto.getRandomValues(new Uint8Array(12));
+    const shared = await _sc().deriveKey({ name: "ECDH", public: recPub }, eph.privateKey, { name: "AES-GCM", length: 256 }, false, ["encrypt"]);
+    const ct = await _sc().encrypt({ name: "AES-GCM", iv }, shared, await _sc().exportKey("pkcs8", priv));
+    return { ephPub: await e2eExportPub(eph.publicKey), iv: _b64(iv), enc: _b64(ct) };
+  }
+  async function e2eEnc(key, text) {
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const ct = await _sc().encrypt({ name: "AES-GCM", iv }, key, new TextEncoder().encode(text));
+    return "e1:" + _b64(iv) + ":" + _b64(ct);
+  }
+  async function e2eDec(key, payload) {
+    const p = payload.split(":");
+    const pt = await _sc().decrypt({ name: "AES-GCM", iv: _unb64(p[1]) }, key, _unb64(p[2]));
+    return new TextDecoder().decode(pt);
+  }
+  async function getConvKey(uid) {
+    if (convKeyCache[uid]) return convKeyCache[uid];
+    const prof = usersCache[uid];
+    if (!prof || !prof.pubKey || !myPrivKey) return null;
+    try {
+      const theirPub = await e2eImportPub(prof.pubKey);
+      const k = await _sc().deriveKey({ name: "ECDH", public: theirPub }, myPrivKey, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
+      convKeyCache[uid] = k; return k;
+    } catch (e) { return null; }
+  }
+  // Local (device) key cache so a page reload / session-restore can still decrypt
+  // without re-entering the password. Stored as a non-exported CryptoKey handle.
+  const KeyStore = {
+    open() { return new Promise((res, rej) => { const r = indexedDB.open("nx-keys", 1); r.onupgradeneeded = () => r.result.createObjectStore("k"); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); }); },
+    async put(uid, obj) { try { const db = await this.open(); await new Promise((res, rej) => { const tx = db.transaction("k", "readwrite"); tx.objectStore("k").put(obj, uid); tx.oncomplete = res; tx.onerror = () => rej(tx.error); }); } catch (e) {} },
+    async get(uid) { try { const db = await this.open(); return await new Promise((res) => { const tx = db.transaction("k", "readonly"); const rq = tx.objectStore("k").get(uid); rq.onsuccess = () => res(rq.result || null); rq.onerror = () => res(null); }); } catch (e) { return null; } },
+    async del(uid) { try { const db = await this.open(); await new Promise((res) => { const tx = db.transaction("k", "readwrite"); tx.objectStore("k").delete(uid); tx.oncomplete = res; tx.onerror = res; }); } catch (e) {} },
+  };
+  async function loadRecoveryPub() {
+    if (recoveryPubKey) return;
+    try { const cfg = await f().getDoc(f().doc(FB.db, "config", "e2e")); if (cfg.exists() && cfg.data().recoveryPub) recoveryPubKey = await e2eImportPub(cfg.data().recoveryPub); } catch (e) {}
+  }
+  // Called at login (password available): unwrap or first-time-generate the user's keypair.
+  async function setupCrypto(uid, profile, password) {
+    for (const k in convKeyCache) delete convKeyCache[k];
+    myPrivKey = null; myPubB64 = null;
+    try {
+      await loadRecoveryPub();
+      if (profile.pubKey && profile.encPrivKey) {
+        myPrivKey = await e2eUnwrapPw(JSON.parse(profile.encPrivKey), password);
+        myPubB64 = profile.pubKey;
+        if (!profile.recPrivKey && recoveryPubKey) { try { await f().updateDoc(uref(uid), { recPrivKey: JSON.stringify(await e2eEscrow(myPrivKey, recoveryPubKey)) }); } catch (e) {} }
+      } else {
+        const kp = await e2eGenKeys();
+        myPrivKey = kp.privateKey; myPubB64 = await e2eExportPub(kp.publicKey);
+        const upd = { pubKey: myPubB64, encPrivKey: JSON.stringify(await e2eWrapPw(kp.privateKey, password)) };
+        if (recoveryPubKey) upd.recPrivKey = JSON.stringify(await e2eEscrow(kp.privateKey, recoveryPubKey));
+        await f().updateDoc(uref(uid), upd);
+        if (usersCache[uid]) Object.assign(usersCache[uid], upd);
+      }
+      await KeyStore.put(uid, { priv: myPrivKey, pub: myPubB64 });
+    } catch (e) { console.warn("E2E setup failed", e); myPrivKey = null; }
+  }
+  // Called on session-restore (no password): reuse the device-cached key.
+  async function restoreCrypto(uid) {
+    for (const k in convKeyCache) delete convKeyCache[k];
+    const cached = await KeyStore.get(uid);
+    if (cached && cached.priv) { myPrivKey = cached.priv; myPubB64 = cached.pub; }
+    else { myPrivKey = null; myPubB64 = null; }
+    await loadRecoveryPub();
+  }
+  async function e2eRewrap(newPassword) {   // keep the wrapped key in sync after a password change
+    if (!myPrivKey || !session) return;
+    try { await f().updateDoc(uref(session.uid), { encPrivKey: JSON.stringify(await e2eWrapPw(myPrivKey, newPassword)) }); } catch (e) { console.warn("rewrap failed", e); }
+  }
+
+  // ============================================================
   //  Firebase data layer
   // ============================================================
   async function loadFirebase() {
@@ -1397,11 +1507,14 @@ video.media-real { max-height: 300px; }
     if (!profile) { await FB.authMod.signOut(FB.auth); return { ok: false, error: "No profile for this account. Contact your admin." }; }
     if (profile.status === "revoked") { await FB.authMod.signOut(FB.auth); return { ok: false, error: "This account has been revoked. Contact your admin." }; }
     session = { uid, user: pubUser(uid, profile) };
+    await setupCrypto(uid, profile, password);   // unwrap/generate E2E keys (password available here)
     return { ok: true };
   }
   async function logout() {
     stopListeners();
     hangUp(true); stopIncoming(); stopPresence(); handledCalls = new Set();
+    if (session) { try { await KeyStore.del(session.uid); } catch (e) {} }   // drop device key on explicit logout
+    myPrivKey = null; myPubB64 = null; for (const k in convKeyCache) delete convKeyCache[k];
     try { await FB.authMod.signOut(FB.auth); } catch (e) {}
     session = null; activeContact = null;
     navStack = ["screen-login"];
@@ -1439,7 +1552,7 @@ video.media-real { max-height: 300px; }
     stopConversationsListener();
     await refreshUsersCache();
     const q = f().query(msgsCol(), f().where("participants", "array-contains", session.uid));
-    listUnsub = f().onSnapshot(q, (snap) => {
+    listUnsub = f().onSnapshot(q, async (snap) => {
       const byContact = {}, unread = {};
       snap.forEach(d => {
         const m = d.data();
@@ -1447,9 +1560,17 @@ video.media-real { max-height: 300px; }
         const other = m.from === session.uid ? m.to : m.from;
         const t = tsMillis(m.createdAt);
         const cur = byContact[other];
-        if (!cur || t > cur.last_at) byContact[other] = { last_at: t, body: m.deleted ? "🚫 This message was deleted" : m.body, kind: m.deleted ? "text" : m.kind, sender_id: m.from };
+        if (!cur || t > cur.last_at) byContact[other] = { last_at: t, body: m.deleted ? "🚫 This message was deleted" : m.body, kind: m.deleted ? "text" : m.kind, sender_id: m.from, enc: !m.deleted && !!m.enc };
         if (m.to === session.uid && !m.read && !m.deleted) unread[other] = (unread[other] || 0) + 1;
       });
+      // Decrypt the last-message preview for each conversation.
+      for (const uid of Object.keys(byContact)) {
+        const e = byContact[uid];
+        if (e.enc && e.body) {
+          const k = await getConvKey(uid);
+          if (k) { try { e.body = await e2eDec(k, e.body); } catch (_) { e.body = "🔒 Message"; } } else { e.body = "🔒 Message"; }
+        }
+      }
       convItems = Object.keys(byContact).map(uid => {
         const prof = usersCache[uid];
         return {
@@ -1561,9 +1682,19 @@ video.media-real { max-height: 300px; }
           created_at: tsMillis(m.createdAt),
           status: m.from === session.uid ? (m.read ? "read" : "delivered") : "in",
           replyTo: m.replyTo || null, edited: !!m.edited, deleted: !!m.deleted, reactions: m.reactions || {},
+          enc: !!m.enc,
         });
       });
       msgs.sort((a, b) => a.created_at - b.created_at);
+      // Decrypt end-to-end encrypted messages for display (plaintext never leaves this device).
+      const ckey = await getConvKey(activeContact.id);
+      for (const it of msgs) {
+        if (!it.enc) continue;
+        if (ckey) {
+          try { it.body = await e2eDec(ckey, it.body); } catch (e) { it.body = "🔒 Unable to decrypt"; }
+          if (it.replyTo && it.replyTo.enc && it.replyTo.snippet) { try { it.replyTo = Object.assign({}, it.replyTo, { snippet: await e2eDec(ckey, it.replyTo.snippet) }); } catch (e) {} }
+        } else { it.body = "🔒 Encrypted — sign in again to read"; }
+      }
       currentMsgs = msgs;
       if (threadFirstRender) {
         msgHiddenCount = Math.max(0, msgs.length - initialWindowSize(msgs));
@@ -1590,7 +1721,9 @@ video.media-real { max-height: 300px; }
     const prevCount = box._lastCount || 0;
     const view = msgHiddenCount > 0 ? msgs.slice(msgHiddenCount) : msgs;
     let html = "", lastDay = "";
-    if (msgHiddenCount > 0) html = `<button class="load-earlier" id="load-earlier"><svg viewBox="0 0 24 24"><path d="M7 14l5-5 5 5z"/></svg>Load earlier messages</button>`;
+    const e2eActive = !!(myPrivKey && activeContact && usersCache[activeContact.id] && usersCache[activeContact.id].pubKey);
+    if (msgHiddenCount === 0 && e2eActive) html += `<div class="e2e-note"><svg viewBox="0 0 24 24"><path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V10a2 2 0 00-2-2zM9 6c0-1.66 1.34-3 3-3s3 1.34 3 3v2H9V6z"/></svg>Messages are end-to-end encrypted</div>`;
+    if (msgHiddenCount > 0) html += `<button class="load-earlier" id="load-earlier"><svg viewBox="0 0 24 24"><path d="M7 14l5-5 5 5z"/></svg>Load earlier messages</button>`;
     view.forEach(m => {
       const day = new Date(m.created_at).toDateString();
       if (day !== lastDay) { lastDay = day; html += `<div class="day-sep"><span>${daySepLabel(m.created_at)}</span></div>`; }
@@ -1706,7 +1839,15 @@ video.media-real { max-height: 300px; }
       body: body || "", kind: kind || "text", meta: meta || {},
       read: false, createdAt: f().serverTimestamp(),
     };
-    if (replyTo) { doc.replyTo = replyTo; clearContext(); }
+    let rt = replyTo ? { id: replyTo.id, name: replyTo.name, snippet: replyTo.snippet } : null;
+    // End-to-end encrypt the text body + reply snippet when the recipient has a key.
+    const key = await getConvKey(activeContact.id);
+    if (key) {
+      if (doc.body) { try { doc.body = await e2eEnc(key, doc.body); doc.enc = true; } catch (e) {} }
+      if (rt && rt.snippet) { try { rt.snippet = await e2eEnc(key, rt.snippet); rt.enc = true; } catch (e) {} }
+    }
+    if (rt) doc.replyTo = rt;
+    if (replyTo) clearContext();
     try {
       await f().addDoc(msgsCol(), doc);
       clearTyping();
@@ -1733,8 +1874,12 @@ video.media-real { max-height: 300px; }
     else startRecording();
   }
   async function editMessage(id, body) {
-    try { await f().updateDoc(f().doc(FB.db, "messages", id), { body, edited: true }); }
-    catch (e) { toast("Couldn't edit message."); }
+    try {
+      const out = { body, edited: true, enc: false };
+      const key = await getConvKey(activeContact.id);
+      if (key) { try { out.body = await e2eEnc(key, body); out.enc = true; } catch (e) {} }
+      await f().updateDoc(f().doc(FB.db, "messages", id), out);
+    } catch (e) { toast("Couldn't edit message."); }
   }
   sendBtn.addEventListener("click", () => { if (recording) { stopRecording(true); return; } doSend(); });
   async function startRecording() {
@@ -2145,7 +2290,7 @@ video.media-real { max-height: 300px; }
       <div class="modal-actions"><button class="cancel">Cancel</button><button class="confirm">Update</button></div>`,
       (root) => $(".confirm", root).addEventListener("click", async () => {
         const v = $("#np", root).value; if (v.length < 6) { $("#np-err", root).textContent = "Use at least 6 characters."; return; }
-        try { await FB.authMod.updatePassword(FB.auth.currentUser, v); closeModal(); toast("Password updated"); }
+        try { await FB.authMod.updatePassword(FB.auth.currentUser, v); await e2eRewrap(v); closeModal(); toast("Password updated"); }
         catch (e) { $("#np-err", root).textContent = (e.code === "auth/requires-recent-login") ? "Please log out and back in, then try again." : "Couldn't update password."; }
       }));
   }
@@ -2532,7 +2677,7 @@ video.media-real { max-height: 300px; }
     FB.authMod.onAuthStateChanged(FB.auth, async (u) => {
       if (u && !session) {
         const profile = await fetchProfile(u.uid);
-        if (profile && profile.status === "active") { session = { uid: u.uid, user: pubUser(u.uid, profile) }; enterApp(); }
+        if (profile && profile.status === "active") { session = { uid: u.uid, user: pubUser(u.uid, profile) }; await restoreCrypto(u.uid); enterApp(); }
       }
     });
   }
