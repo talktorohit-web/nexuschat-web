@@ -669,6 +669,15 @@ img { display: block; max-width: 100%; }
 [data-theme="whatsapp"] #screen-admin .topbar,
 [data-theme="gold"] #screen-admin .topbar { color: #fff; }
 .admin-stats { display: grid; grid-template-columns: repeat(3,1fr); gap: 10px; padding: 14px; }
+.btn-danger-full {
+  width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px;
+  background: color-mix(in srgb, var(--danger) 14%, var(--card)); color: var(--danger);
+  border: 1px solid color-mix(in srgb, var(--danger) 40%, transparent);
+  font-size: 15px; font-weight: 600; padding: 12px; border-radius: 12px;
+}
+.btn-danger-full svg { width: 18px; height: 18px; fill: currentColor; }
+.btn-danger-full:active { transform: scale(.98); }
+.admin-hint { font-size: 12px; color: var(--text-dim); margin-top: 8px; line-height: 1.4; }
 .stat-card { background: var(--card); border-radius: 14px; padding: 14px 12px; box-shadow: var(--shadow); }
 .stat-card .n { font-size: 26px; font-weight: 800; color: var(--accent); }
 .stat-card .l { font-size: 12px; color: var(--text-dim); margin-top: 2px; }
@@ -1081,6 +1090,7 @@ video.media-real { max-height: 300px; }
         <button class="icon-btn" id="btn-chat-search" aria-label="Search messages"><svg viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27a6.5 6.5 0 10-.7.7l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0A4.5 4.5 0 1114 9.5 4.5 4.5 0 019.5 14z"/></svg></button>
         <button class="icon-btn" id="btn-voice-call" aria-label="Voice call"><svg viewBox="0 0 24 24"><path d="M6.62 10.79c1.44 2.83 3.76 5.14 6.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57a1 1 0 011 1V20a1 1 0 01-1 1A17 17 0 013 4a1 1 0 011-1h3.5a1 1 0 011 1c0 1.25.2 2.45.57 3.57.11.35.03.74-.25 1.02l-2.2 2.2z"/></svg></button>
         <button class="icon-btn" id="btn-video-call" aria-label="Video call"><svg viewBox="0 0 24 24"><path d="M17 10.5V7a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h12a1 1 0 001-1v-3.5l4 4v-11l-4 4z"/></svg></button>
+        <button class="icon-btn" id="btn-chat-menu" aria-label="More"><svg viewBox="0 0 24 24"><path d="M12 8a2 2 0 100-4 2 2 0 000 4zm0 2a2 2 0 100 4 2 2 0 000-4zm0 6a2 2 0 100 4 2 2 0 000-4z"/></svg></button>
       </div>
       <div class="chat-search-bar" id="chat-search-bar" hidden>
         <svg class="cs-ico" viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27a6.5 6.5 0 10-.7.7l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0A4.5 4.5 0 1114 9.5 4.5 4.5 0 019.5 14z"/></svg>
@@ -1130,7 +1140,14 @@ video.media-real { max-height: 300px; }
         <button class="btn-mini" id="btn-add-user"><svg viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>New User</button>
       </div>
       <div id="admin-users"></div>
-      <div style="height:24px"></div>
+      <div class="admin-section-title"><h3>Database</h3></div>
+      <div style="padding:0 14px 24px">
+        <button class="btn-danger-full" id="btn-empty-db">
+          <svg viewBox="0 0 24 24"><path d="M6 19a2 2 0 002 2h8a2 2 0 002-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+          Delete all messages (empty database)
+        </button>
+        <div class="admin-hint">Removes every message in every conversation to free up storage. User accounts are kept. Messages are end-to-end encrypted, so this only ever sees encrypted data.</div>
+      </div>
     </div>
   </section>
 
@@ -2035,6 +2052,55 @@ video.media-real { max-height: 300px; }
       <div class="modal-actions"><button class="cancel">Cancel</button><button class="confirm" style="background:var(--danger)">Delete</button></div>`,
       (root) => $(".confirm", root).addEventListener("click", () => { closeModal(); deleteForEveryone(m); }));
   }
+  // ---- Hard delete: clear a chat / empty the database (frees storage) ----
+  async function deleteInBatches(ids) {
+    for (let i = 0; i < ids.length; i += 400) {
+      const batch = f().writeBatch(FB.db);
+      ids.slice(i, i + 400).forEach(id => batch.delete(f().doc(FB.db, "messages", id)));
+      await batch.commit();
+    }
+  }
+  async function clearChat(contactId) {
+    const pk = pairKey(session.uid, contactId);
+    const snap = await f().getDocs(f().query(msgsCol(), f().where("participants", "array-contains", session.uid)));
+    const ids = []; snap.forEach(d => { if (d.data().pair === pk) ids.push(d.id); });
+    await deleteInBatches(ids);
+    return ids.length;
+  }
+  async function adminEmptyAllMessages() {
+    const snap = await f().getDocs(msgsCol());   // admin-only read of all messages
+    const ids = []; snap.forEach(d => ids.push(d.id));
+    await deleteInBatches(ids);
+    return ids.length;
+  }
+  function confirmClearChat(contact) {
+    if (!contact) return;
+    openModal(`<h3>Clear this chat?</h3><div class="msub">Permanently deletes all messages with <b>${escapeHtml(contact.name)}</b> for <b>both of you</b> and frees up storage. This cannot be undone.</div>
+      <div class="modal-actions"><button class="cancel">Cancel</button><button class="confirm" style="background:var(--danger)">Clear chat</button></div>`,
+      (root) => $(".confirm", root).addEventListener("click", async () => {
+        closeModal(); toast("Clearing…");
+        try { const n = await clearChat(contact.id); toast("Cleared " + n + " message" + (n === 1 ? "" : "s")); }
+        catch (e) { toast("Couldn't clear chat"); }
+      }));
+  }
+  function openChatMenu() {
+    const c = activeContact; if (!c) return;
+    openModal(`<h3>${escapeHtml(c.name)}</h3>
+      <button class="list-item" data-act="clear" style="width:100%;text-align:left;border-radius:12px;background:var(--card-2);margin:6px 0">
+        <div class="li-ico" style="background:var(--danger)"><svg viewBox="0 0 24 24"><path d="M6 19a2 2 0 002 2h8a2 2 0 002-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg></div>
+        <div class="li-body"><div class="li-t">Clear chat</div><div class="li-s">Delete all messages for both of you</div></div></button>
+      <div class="modal-actions"><button class="cancel">Close</button></div>`,
+      (root) => { const b = $('[data-act="clear"]', root); if (b) b.addEventListener("click", () => { closeModal(); confirmClearChat(c); }); });
+  }
+  function confirmEmptyDatabase() {
+    openModal(`<h3>Delete ALL messages?</h3><div class="msub">Permanently deletes <b>every message in every conversation</b> for all users and empties the database. User accounts are kept. This cannot be undone.</div>
+      <div class="modal-actions"><button class="cancel">Cancel</button><button class="confirm" style="background:var(--danger)">Delete everything</button></div>`,
+      (root) => $(".confirm", root).addEventListener("click", async () => {
+        closeModal(); toast("Emptying database…");
+        try { const n = await adminEmptyAllMessages(); toast("Deleted " + n + " message" + (n === 1 ? "" : "s")); }
+        catch (e) { toast("Couldn't empty database"); }
+      }));
+  }
   async function toggleReaction(m, emoji) {
     const mine = (m.reactions || {})[session.uid];
     try {
@@ -2444,6 +2510,7 @@ video.media-real { max-height: 300px; }
       }));
   }
   $("#btn-add-user").addEventListener("click", openAddUserModal);
+  $("#btn-empty-db").addEventListener("click", confirmEmptyDatabase);
 
   // ============================================================
   //  Settings
@@ -2476,6 +2543,7 @@ video.media-real { max-height: 300px; }
     $("#chat-back").addEventListener("click", () => { closeEmoji(); closeChatSearch(); if (recording) stopRecording(false); clearContext(); clearTyping(); stopChatMeta(); input.value = ""; input.style.height = "auto"; updateSendIcon(); stopThreadListener(); activeContact = null; show("screen-chats", { back: true }); });
     $("#btn-voice-call").addEventListener("click", () => { if (activeContact) startCall(activeContact, "audio"); });
     $("#btn-video-call").addEventListener("click", () => { if (activeContact) startCall(activeContact, "video"); });
+    $("#btn-chat-menu").addEventListener("click", openChatMenu);
     bindCallControls();
     setupMessageInteractions();
     $("#btn-logout").addEventListener("click", () => {
