@@ -1420,7 +1420,12 @@ video.media-real { max-height: 300px; }
   }
   async function getConvKey(uid) {
     if (convKeyCache[uid]) return convKeyCache[uid];
-    const prof = usersCache[uid];
+    let prof = usersCache[uid];
+    // The other party may not be in our cached directory yet (e.g. a newly-created
+    // user who just messaged us). Fetch their doc on demand so we can decrypt.
+    if ((!prof || !prof.pubKey) && myPrivKey) {
+      try { const snap = await f().getDoc(uref(uid)); if (snap.exists()) { prof = snap.data(); usersCache[uid] = prof; } } catch (e) {}
+    }
     if (!prof || !prof.pubKey || !myPrivKey) return null;
     try {
       const theirPub = await e2eImportPub(prof.pubKey);
