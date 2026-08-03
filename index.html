@@ -1600,11 +1600,15 @@ video.media-real { max-height: 300px; }
     return it.body || "";
   }
   function stopConversationsListener() { if (listUnsub) { listUnsub(); listUnsub = null; } }
-  async function startConversationsListener() {
+  async function startConversationsListener(fallback) {
     if (!session) return;
     stopConversationsListener();
     await refreshUsersCache();
-    const q = f().query(msgsCol(), f().where("participants", "array-contains", session.uid));
+    // Scan only the most-recent messages to build the chat list, instead of the whole
+    // history — this is what stops the app from getting slower as messages pile up.
+    const q = fallback
+      ? f().query(msgsCol(), f().where("participants", "array-contains", session.uid))
+      : f().query(msgsCol(), f().where("participants", "array-contains", session.uid), f().orderBy("createdAt", "desc"), f().limit(CONV_LIMIT));
     listUnsub = f().onSnapshot(q, async (snap) => {
       const byContact = {}, unread = {};
       snap.forEach(d => {
@@ -1634,7 +1638,10 @@ video.media-real { max-height: 300px; }
         };
       }).sort((a, b) => b.last_at - a.last_at);
       paintChatList($("#search-input") ? $("#search-input").value : "");
-    }, (err) => { console.warn("conversations listener", err); });
+    }, (err) => {
+      console.warn("conversations listener", err);
+      if (!fallback) startConversationsListener(true);   // e.g. index still building → full-scan fallback
+    });
   }
   function paintChatList(filter = "") {
     const list = $("#chat-list"); if (!list) return;
@@ -1709,6 +1716,7 @@ video.media-real { max-height: 300px; }
     const _mb = $("#messages");
     _mb.innerHTML = ""; _mb._lastCount = 0; _mb._newCount = 0;
     msgHiddenCount = 0; threadFirstRender = true; loadingEarlier = false;
+    threadUnlimited = false; threadAtServerLimit = false; pendingPreserveScroll = null; suppressBadgeOnce = false;
     $("#jump-latest").hidden = true; $("#jl-badge").hidden = true; $("#jl-badge").textContent = "";
     closeChatSearch();
     show("screen-chat");
@@ -1719,10 +1727,14 @@ video.media-real { max-height: 300px; }
   function startThreadListener() {
     stopThreadListener();
     const pk = pairKey(session.uid, activeContact.id);
-    // Query by participants (a rules-provably-safe filter), then keep this
-    // conversation's messages client-side. Sorted client-side too, so no index.
-    const q = f().query(msgsCol(), f().where("participants", "array-contains", session.uid));
+    // Fetch only this conversation's most-recent messages (real-time). Older messages
+    // are pulled on demand via "Load earlier" (threadUnlimited). The participants
+    // filter keeps it provably-safe under the security rules.
+    const q = threadUnlimited
+      ? f().query(msgsCol(), f().where("participants", "array-contains", session.uid))
+      : f().query(msgsCol(), f().where("participants", "array-contains", session.uid), f().where("pair", "==", pk), f().orderBy("createdAt", "desc"), f().limit(THREAD_LIMIT));
     threadUnsub = f().onSnapshot(q, async (snap) => {
+      threadAtServerLimit = !threadUnlimited && snap.size >= THREAD_LIMIT;
       const msgs = [];
       const toMarkRead = [];
       snap.forEach(d => {
@@ -1760,7 +1772,11 @@ video.media-real { max-height: 300px; }
       renderMessages();
       // mark their messages as read
       for (const id of toMarkRead) { try { await f().updateDoc(f().doc(FB.db, "messages", id), { read: true }); } catch (e) {} }
-    }, (err) => { console.warn("thread listener", err); toast("Couldn't load messages."); });
+    }, (err) => {
+      console.warn("thread listener", err);
+      if (!threadUnlimited) { threadUnlimited = true; startThreadListener(); }  // e.g. index still building → full-history fallback
+      else toast("Couldn't load messages.");
+    });
   }
   function daySepLabel(ts) {
     const d = new Date(ts), now = new Date();
@@ -1776,9 +1792,10 @@ video.media-real { max-height: 300px; }
     const prevCount = box._lastCount || 0;
     const view = msgHiddenCount > 0 ? msgs.slice(msgHiddenCount) : msgs;
     let html = "", lastDay = "";
+    const moreToLoad = msgHiddenCount > 0 || (threadAtServerLimit && !threadUnlimited);
     const e2eActive = !!(myPrivKey && activeContact && usersCache[activeContact.id] && usersCache[activeContact.id].pubKey);
-    if (msgHiddenCount === 0 && e2eActive) html += `<div class="e2e-note"><svg viewBox="0 0 24 24"><path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V10a2 2 0 00-2-2zM9 6c0-1.66 1.34-3 3-3s3 1.34 3 3v2H9V6z"/></svg>Messages are end-to-end encrypted</div>`;
-    if (msgHiddenCount > 0) html += `<button class="load-earlier" id="load-earlier"><svg viewBox="0 0 24 24"><path d="M7 14l5-5 5 5z"/></svg>Load earlier messages</button>`;
+    if (!moreToLoad && e2eActive) html += `<div class="e2e-note"><svg viewBox="0 0 24 24"><path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V10a2 2 0 00-2-2zM9 6c0-1.66 1.34-3 3-3s3 1.34 3 3v2H9V6z"/></svg>Messages are end-to-end encrypted</div>`;
+    if (moreToLoad) html += `<button class="load-earlier" id="load-earlier"><svg viewBox="0 0 24 24"><path d="M7 14l5-5 5 5z"/></svg>Load earlier messages</button>`;
     view.forEach(m => {
       const day = new Date(m.created_at).toDateString();
       if (day !== lastDay) { lastDay = day; html += `<div class="day-sep"><span>${daySepLabel(m.created_at)}</span></div>`; }
@@ -1786,10 +1803,13 @@ video.media-real { max-height: 300px; }
     });
     if (!msgs.length) html = `<div class="empty-state" style="height:100%"><div class="big">👋</div><div>Say hello to ${escapeHtml(activeContact.name)}</div></div>`;
     box.innerHTML = html;
-    if (atBottom) {
+    if (pendingPreserveScroll) {                 // after a "load full history" escalation, keep the viewport steady
+      box.scrollTop = pendingPreserveScroll.top + (box.scrollHeight - pendingPreserveScroll.height);
+      pendingPreserveScroll = null;
+    } else if (atBottom) {
       box.scrollTop = box.scrollHeight;
       box._newCount = 0;
-    } else if (msgs.length > prevCount) {
+    } else if (msgs.length > prevCount && !suppressBadgeOnce) {
       const added = msgs.slice(prevCount).filter(m => !m.mine && !m.deleted).length;
       if (added > 0) {
         box._newCount = (box._newCount || 0) + added;
@@ -1797,6 +1817,7 @@ video.media-real { max-height: 300px; }
         $("#jl-badge").hidden = false; $("#jump-latest").hidden = false;
       }
     }
+    suppressBadgeOnce = false;
     box._lastCount = msgs.length;
     // keep search highlights in sync when the search bar is open
     if (!$("#chat-search-bar").hidden && ($("#chat-search-input").value || "").trim()) runChatSearch(searchIdx, true);
@@ -1850,6 +1871,14 @@ video.media-real { max-height: 300px; }
   let threadFirstRender = true;
   let loadingEarlier = false;
   const EARLIER_PAGE = 30;    // how many older messages each "load earlier" reveals
+  // Server-side paging: only recent messages are fetched (so the app doesn't re-download
+  // the entire history every time). Escalates to full history on demand.
+  const THREAD_LIMIT = 100;   // recent messages fetched for an open conversation
+  const CONV_LIMIT = 200;     // recent messages scanned to build the chat list
+  let threadUnlimited = false;     // escalated to full history for this open chat
+  let threadAtServerLimit = false; // the recent page hit the cap → older messages exist on the server
+  let pendingPreserveScroll = null;
+  let suppressBadgeOnce = false;
   function initialWindowSize(msgs) {
     // Show today's messages (they sit at the tail since sorted ascending),
     // but always at least a small buffer so the thread isn't empty.
@@ -1860,14 +1889,25 @@ video.media-real { max-height: 300px; }
     return Math.min(msgs.length, Math.max(todayCount, 15));
   }
   function loadEarlier() {
-    if (loadingEarlier || msgHiddenCount <= 0) return;
-    loadingEarlier = true;
+    if (loadingEarlier) return;
     const box = $("#messages");
-    const prevH = box.scrollHeight, prevTop = box.scrollTop;
-    msgHiddenCount = Math.max(0, msgHiddenCount - EARLIER_PAGE);
-    renderMessages();
-    box.scrollTop = prevTop + (box.scrollHeight - prevH);  // keep the viewport steady
-    loadingEarlier = false;
+    if (msgHiddenCount > 0) {                    // reveal already-fetched older messages
+      loadingEarlier = true;
+      const prevH = box.scrollHeight, prevTop = box.scrollTop;
+      msgHiddenCount = Math.max(0, msgHiddenCount - EARLIER_PAGE);
+      renderMessages();
+      box.scrollTop = prevTop + (box.scrollHeight - prevH);  // keep the viewport steady
+      loadingEarlier = false;
+      return;
+    }
+    if (threadAtServerLimit && !threadUnlimited) {  // fetched page exhausted → pull full history
+      loadingEarlier = true;
+      pendingPreserveScroll = { height: box.scrollHeight, top: box.scrollTop };
+      suppressBadgeOnce = true;
+      threadUnlimited = true; threadFirstRender = false;
+      startThreadListener();                      // re-subscribes with the full-history query
+      loadingEarlier = false;
+    }
   }
   function jumpToMessage(id) {
     if (!id) { toast("Original message unavailable"); return; }
@@ -2239,7 +2279,8 @@ video.media-real { max-height: 300px; }
     setSearchCurrent();
   }
   function openChatSearch() {
-    // Reveal the full history so search spans the whole conversation, not just today's window.
+    // Reveal the full history so search spans the whole conversation, not just the loaded window.
+    if (threadAtServerLimit && !threadUnlimited) { suppressBadgeOnce = true; threadUnlimited = true; threadFirstRender = false; startThreadListener(); }
     if (msgHiddenCount > 0) { msgHiddenCount = 0; renderMessages(); }
     $("#chat-search-bar").hidden = false; $("#chat-search-input").focus();
   }
