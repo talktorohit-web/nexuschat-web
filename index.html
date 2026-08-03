@@ -1418,6 +1418,37 @@ video.media-real { max-height: 300px; }
     const pt = await _sc().decrypt({ name: "AES-GCM", iv: _unb64(p[1]) }, key, _unb64(p[2]));
     return new TextDecoder().decode(pt);
   }
+  // Binary media encryption (encrypt the raw bytes so size stays ~the same).
+  async function e2eEncBytes(key, bytes) {
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const ct = await _sc().encrypt({ name: "AES-GCM", iv }, key, bytes);
+    return { iv: _b64(iv), ct: _b64(ct) };
+  }
+  async function e2eDecBytes(key, ivB64, ctB64) {
+    const pt = await _sc().decrypt({ name: "AES-GCM", iv: _unb64(ivB64) }, key, _unb64(ctB64));
+    return new Uint8Array(pt);
+  }
+  function parseDataUrl(u) { const m = /^data:([^;]*);base64,(.*)$/s.exec(u || ""); return m ? { mime: m[1] || "application/octet-stream", bytes: _unb64(m[2]) } : null; }
+  // Encrypt the sensitive parts of a message's media metadata before it leaves the device.
+  async function encryptMeta(key, meta) {
+    const out = Object.assign({}, meta);
+    if (meta.data) { const d = parseDataUrl(meta.data); if (d) { const e = await e2eEncBytes(key, d.bytes); out.encData = e.ct; out.dataIv = e.iv; out.mime = d.mime; delete out.data; } }
+    if (meta.caption) { out.caption = await e2eEnc(key, meta.caption); out.capEnc = true; }
+    if (meta.docname) { out.docname = await e2eEnc(key, meta.docname); out.dnEnc = true; }
+    if (meta.lat != null) { out.encLoc = await e2eEnc(key, JSON.stringify({ lat: meta.lat, lng: meta.lng })); delete out.lat; delete out.lng; }
+    out.menc = true;
+    return out;
+  }
+  async function decryptMeta(key, meta) {
+    if (!meta || !meta.menc) return meta;
+    const out = Object.assign({}, meta);
+    if (meta.encData) { const bytes = await e2eDecBytes(key, meta.dataIv, meta.encData); out.data = "data:" + (meta.mime || "application/octet-stream") + ";base64," + _b64(bytes); }
+    if (meta.capEnc && meta.caption) out.caption = await e2eDec(key, meta.caption);
+    if (meta.dnEnc && meta.docname) out.docname = await e2eDec(key, meta.docname);
+    if (meta.encLoc) { const l = JSON.parse(await e2eDec(key, meta.encLoc)); out.lat = l.lat; out.lng = l.lng; }
+    return out;
+  }
+  function metaIsEncryptable(meta) { return !!(meta && (meta.data || meta.caption || meta.docname || meta.lat != null)); }
   async function getConvKey(uid) {
     if (convKeyCache[uid]) return convKeyCache[uid];
     let prof = usersCache[uid];
@@ -1711,11 +1742,13 @@ video.media-real { max-height: 300px; }
       // Decrypt end-to-end encrypted messages for display (plaintext never leaves this device).
       const ckey = await getConvKey(activeContact.id);
       for (const it of msgs) {
-        if (!it.enc) continue;
+        const mediaEnc = it.meta && it.meta.menc;
+        if (!it.enc && !mediaEnc) continue;
         if (ckey) {
-          try { it.body = await e2eDec(ckey, it.body); } catch (e) { it.body = "🔒 Unable to decrypt"; }
-          if (it.replyTo && it.replyTo.enc && it.replyTo.snippet) { try { it.replyTo = Object.assign({}, it.replyTo, { snippet: await e2eDec(ckey, it.replyTo.snippet) }); } catch (e) {} }
-        } else { it.body = "🔒 Encrypted — sign in again to read"; }
+          if (it.enc) { try { it.body = await e2eDec(ckey, it.body); } catch (e) { it.body = "🔒 Unable to decrypt"; } }
+          if (it.enc && it.replyTo && it.replyTo.enc && it.replyTo.snippet) { try { it.replyTo = Object.assign({}, it.replyTo, { snippet: await e2eDec(ckey, it.replyTo.snippet) }); } catch (e) {} }
+          if (mediaEnc) { try { it.meta = await decryptMeta(ckey, it.meta); } catch (e) {} }
+        } else if (it.enc) { it.body = "🔒 Encrypted — sign in again to read"; }
       }
       currentMsgs = msgs;
       if (threadFirstRender) {
@@ -1867,6 +1900,7 @@ video.media-real { max-height: 300px; }
     if (key) {
       if (doc.body) { try { doc.body = await e2eEnc(key, doc.body); doc.enc = true; } catch (e) {} }
       if (rt && rt.snippet) { try { rt.snippet = await e2eEnc(key, rt.snippet); rt.enc = true; } catch (e) {} }
+      if (metaIsEncryptable(doc.meta)) { try { doc.meta = await encryptMeta(key, doc.meta); } catch (e) {} }
     }
     if (rt) doc.replyTo = rt;
     if (replyTo) clearContext();
