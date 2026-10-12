@@ -805,6 +805,7 @@ img { display: block; max-width: 100%; }
 .call-ctl svg { width: 25px; height: 25px; fill: currentColor; }
 .call-ctl .ctl-label { position: absolute; left: 50%; bottom: -20px; transform: translateX(-50%); font: 500 11px/1 -apple-system, sans-serif; font-style: normal; color: rgba(255,255,255,.72); white-space: nowrap; }
 .call-ctl.off { background: #fff; color: #0b141a; }
+.call-ctl.on { background: var(--accent); color: #fff; }
 .call-ctl.call-end { background: #ef4444; }
 .call-ctl.call-end svg { transform: rotate(135deg); }
 .call-screen:not(.video-on) .call-video-only { display: none; }
@@ -1172,6 +1173,7 @@ video.media-real { max-height: 300px; }
   <!-- ===================== CALL SCREEN ===================== -->
   <div class="call-screen" id="call-screen">
     <video class="remote-video" id="remote-video" autoplay playsinline></video>
+    <audio id="remote-audio" autoplay playsinline></audio>
     <div class="call-audio-bg" id="call-audio-bg"></div>
     <video class="local-video" id="local-video" autoplay playsinline muted></video>
     <div class="call-top">
@@ -2660,9 +2662,9 @@ video.media-real { max-height: 300px; }
     if (pc) { try { pc.close(); } catch (e) {} pc = null; }
     if (localStream) { localStream.getTracks().forEach(t => t.stop()); localStream = null; }
     remoteStream = null;
-    try { $("#remote-video").srcObject = null; $("#local-video").srcObject = null; } catch (e) {}
+    try { $("#remote-video").srcObject = null; $("#remote-audio").srcObject = null; $("#local-video").srcObject = null; } catch (e) {}
     const cs = $("#call-screen"); cs.classList.remove("open", "video-on");
-    $("#call-mute").classList.remove("off"); $("#call-camera").classList.remove("off"); $("#call-speaker").classList.remove("off");
+    $("#call-mute").classList.remove("off"); $("#call-camera").classList.remove("off"); $("#call-speaker").classList.remove("off", "on");
     speakerOn = false; facing = "user";
     callRef = null; inCall = false;
   }
@@ -2679,19 +2681,46 @@ video.media-real { max-height: 300px; }
     $("#call-name").textContent = contact.name;
     $("#call-status").textContent = statusText;
     $("#call-camera").style.display = type === "video" ? "grid" : "none";
+    $("#call-speaker").classList.toggle("on", speakerOn);   // reflect earpiece/speaker default for this call type
   }
   const getMedia = (type) => navigator.mediaDevices.getUserMedia({ audio: true, video: type === "video" });
   function attachStreams() {
     remoteStream = new MediaStream();
-    pc.ontrack = (e) => { e.streams[0].getTracks().forEach(t => remoteStream.addTrack(t)); $("#remote-video").srcObject = remoteStream; };
+    pc.ontrack = (e) => {
+      e.streams[0].getTracks().forEach(t => remoteStream.addTrack(t));
+      $("#remote-video").srcObject = remoteStream;
+      $("#remote-audio").srcObject = remoteStream;
+      routeAudio();
+    };
     localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
     $("#local-video").srcObject = localStream;
+  }
+  // Earpiece (default for voice calls) vs loudspeaker. On phones the <video>
+  // element plays through the loudspeaker and the <audio> element through the
+  // earpiece/receiver, so we pick the sink by muting the other element. Only one
+  // element is ever unmuted, so there is never doubled audio.
+  async function routeAudio() {
+    const rv = $("#remote-video"), ra = $("#remote-audio");
+    if (speakerOn) { rv.muted = false; ra.muted = true; try { await ra.pause?.(); } catch (e) {} try { await rv.play?.(); } catch (e) {} }
+    else { rv.muted = true; ra.muted = false; try { await ra.play?.(); } catch (e) {} }
+    // Best-effort on browsers that support output selection (desktop / newer Android).
+    try {
+      const sink = speakerOn ? ra : rv;  // the muted one can still carry the sink hint
+      if (rv.setSinkId) {
+        const outs = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === "audiooutput");
+        const spk = outs.find(d => /speaker/i.test(d.label));
+        const ear = outs.find(d => /(earpiece|receiver)/i.test(d.label));
+        const target = speakerOn ? spk : ear;
+        if (target) { try { await rv.setSinkId(target.deviceId); } catch (e) {} try { await ra.setSinkId(target.deviceId); } catch (e) {} }
+      }
+    } catch (e) {}
   }
   async function startCall(contact, type) {
     if (inCall) return;
     let stream;
     try { stream = await getMedia(type); } catch (e) { toast(type === "video" ? "Camera & mic access needed" : "Microphone access needed"); return; }
     inCall = true; localStream = stream;
+    speakerOn = (type === "video");   // voice calls start on the earpiece, video on the loudspeaker
     showCallUI(contact, type, "Calling…");
     pc = new RTCPeerConnection(RTC_CONFIG); attachStreams();
     callRef = f().doc(callsCol());
@@ -2721,6 +2750,7 @@ video.media-real { max-height: 300px; }
     const type = d.type; let stream;
     try { stream = await getMedia(type); } catch (e) { toast("Access needed to answer"); try { f().updateDoc(f().doc(callsCol(), callId), { status: "declined" }); } catch (_) {} return; }
     inCall = true; localStream = stream;
+    speakerOn = (type === "video");   // voice calls start on the earpiece, video on the loudspeaker
     showCallUI({ name: d.callerName, avatar: d.callerAvatar, color: d.callerColor }, type, "Connecting…");
     pc = new RTCPeerConnection(RTC_CONFIG); attachStreams();
     callRef = f().doc(callsCol(), callId);
@@ -2767,18 +2797,9 @@ video.media-real { max-height: 300px; }
   let speakerOn = false, facing = "user";
   async function toggleSpeaker() {
     speakerOn = !speakerOn;
-    $("#call-speaker").classList.toggle("off", speakerOn);
-    const remote = $("#remote-video");
-    try {
-      if (remote.setSinkId) {
-        const outs = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === "audiooutput");
-        const spk = outs.find(d => /speaker/i.test(d.label));
-        const ear = outs.find(d => /(earpiece|receiver)/i.test(d.label)) || outs.find(d => d.deviceId === "default") || outs[0];
-        const target = speakerOn ? (spk || outs[0]) : (ear || outs[0]);
-        if (target) await remote.setSinkId(target.deviceId);
-      }
-    } catch (e) {}
-    toast(speakerOn ? "🔊 Speaker on" : "🔈 Speaker off");
+    $("#call-speaker").classList.toggle("on", speakerOn);   // highlight when speaker is ON
+    await routeAudio();
+    toast(speakerOn ? "🔊 Speaker on" : "📞 Earpiece");
   }
   async function flipCamera() {
     if (!localStream || !pc) return;
