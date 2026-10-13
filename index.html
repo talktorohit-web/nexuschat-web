@@ -1363,7 +1363,11 @@ video.media-real { max-height: 300px; }
     return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
   }
   function escapeHtml(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, m => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[m])); }
-  function avatarStyle(c) { return `background:${(c && c.color) || "#888"}`; }
+  // Media src must be a data:/blob: URL; clickable hrefs must not be javascript: etc.
+  // Values still pass through escapeHtml so they can never break out of the attribute.
+  const safeMediaSrc = (u) => /^(data:|blob:)/i.test(String(u || "")) ? String(u) : "";
+  const safeHref = (u) => /^(https?:|data:|blob:)/i.test(String(u || "")) ? String(u) : "#";
+  function avatarStyle(c) { return `background:${escapeHtml((c && c.color) || "#888")}`; }
   function tickSVG(status) {
     if (status === "read") return `<span class="status-tick"><svg class="tick-read" viewBox="0 0 24 24"><path d="M18 7l-1.4-1.4-6.3 6.3 1.4 1.4L18 7zm4.2-1.4L11.7 16.2 7.5 12l-1.4 1.4L11.7 19l12-12-1.5-1.4zM.4 13.4 6 19l1.4-1.4L1.8 12 .4 13.4z"/></svg></span>`;
     if (status === "delivered") return `<span class="status-tick"><svg class="tick-sent" viewBox="0 0 24 24"><path d="M18 7l-1.4-1.4-6.3 6.3 1.4 1.4L18 7zm4.2-1.4L11.7 16.2 7.5 12l-1.4 1.4L11.7 19l12-12-1.5-1.4zM.4 13.4 6 19l1.4-1.4L1.8 12 .4 13.4z"/></svg></span>`;
@@ -1444,7 +1448,7 @@ video.media-real { max-height: 300px; }
   async function decryptMeta(key, meta) {
     if (!meta || !meta.menc) return meta;
     const out = Object.assign({}, meta);
-    if (meta.encData) { const bytes = await e2eDecBytes(key, meta.dataIv, meta.encData); out.data = "data:" + (meta.mime || "application/octet-stream") + ";base64," + _b64(bytes); }
+    if (meta.encData) { const bytes = await e2eDecBytes(key, meta.dataIv, meta.encData); const mime = /^[\w.+-]+\/[\w.+-]+$/.test(meta.mime || "") ? meta.mime : "application/octet-stream"; out.data = "data:" + mime + ";base64," + _b64(bytes); }
     if (meta.capEnc && meta.caption) out.caption = await e2eDec(key, meta.caption);
     if (meta.dnEnc && meta.docname) out.docname = await e2eDec(key, meta.docname);
     if (meta.encLoc) { const l = JSON.parse(await e2eDec(key, meta.encLoc)); out.lat = l.lat; out.lng = l.lng; }
@@ -1478,23 +1482,41 @@ video.media-real { max-height: 300px; }
     if (recoveryPubKey) return;
     try { const cfg = await f().getDoc(f().doc(FB.db, "config", "e2e")); if (cfg.exists() && cfg.data().recoveryPub) recoveryPubKey = await e2eImportPub(cfg.data().recoveryPub); } catch (e) {}
   }
+  // Wrapped private-key material lives in a PROTECTED subdoc readable only by the
+  // owner (and admin for recovery) — never in the directory-readable /users doc,
+  // so other members can't grab the blob and brute-force a weak password offline.
+  const secRef = (uid) => f().doc(FB.db, "users", uid, "secure", "keys");
   // Called at login (password available): unwrap or first-time-generate the user's keypair.
   async function setupCrypto(uid, profile, password) {
     for (const k in convKeyCache) delete convKeyCache[k];
     myPrivKey = null; myPubB64 = null;
     try {
       await loadRecoveryPub();
-      if (profile.pubKey && profile.encPrivKey) {
-        myPrivKey = await e2eUnwrapPw(JSON.parse(profile.encPrivKey), password);
+      let sec = null;
+      try { const s = await f().getDoc(secRef(uid)); if (s.exists()) sec = s.data(); } catch (e) {}
+      const secEnc = sec && sec.encPrivKey, secRec = sec && sec.recPrivKey;
+      const legacyEnc = profile.encPrivKey;     // old (world-readable) location
+      if (profile.pubKey && (secEnc || legacyEnc)) {
+        myPrivKey = await e2eUnwrapPw(JSON.parse(secEnc || legacyEnc), password);
         myPubB64 = profile.pubKey;
-        if (!profile.recPrivKey && recoveryPubKey) { try { await f().updateDoc(uref(uid), { recPrivKey: JSON.stringify(await e2eEscrow(myPrivKey, recoveryPubKey)) }); } catch (e) {} }
+        if (!secEnc) {
+          // migrate the wrapped keys into the protected subdoc, then strip the public copy
+          const out = { encPrivKey: legacyEnc };
+          const rec = secRec || profile.recPrivKey || (recoveryPubKey ? JSON.stringify(await e2eEscrow(myPrivKey, recoveryPubKey)) : null);
+          if (rec) out.recPrivKey = rec;
+          try { await f().setDoc(secRef(uid), out, { merge: true }); } catch (e) {}
+          try { await f().updateDoc(uref(uid), { encPrivKey: f().deleteField(), recPrivKey: f().deleteField() }); } catch (e) {}
+        } else if (!secRec && recoveryPubKey) {
+          try { await f().setDoc(secRef(uid), { recPrivKey: JSON.stringify(await e2eEscrow(myPrivKey, recoveryPubKey)) }, { merge: true }); } catch (e) {}
+        }
       } else {
         const kp = await e2eGenKeys();
         myPrivKey = kp.privateKey; myPubB64 = await e2eExportPub(kp.publicKey);
-        const upd = { pubKey: myPubB64, encPrivKey: JSON.stringify(await e2eWrapPw(kp.privateKey, password)) };
-        if (recoveryPubKey) upd.recPrivKey = JSON.stringify(await e2eEscrow(kp.privateKey, recoveryPubKey));
-        await f().updateDoc(uref(uid), upd);
-        if (usersCache[uid]) Object.assign(usersCache[uid], upd);
+        await f().updateDoc(uref(uid), { pubKey: myPubB64 });   // public key stays in the directory doc
+        if (usersCache[uid]) usersCache[uid].pubKey = myPubB64;
+        const secData = { encPrivKey: JSON.stringify(await e2eWrapPw(kp.privateKey, password)) };
+        if (recoveryPubKey) secData.recPrivKey = JSON.stringify(await e2eEscrow(kp.privateKey, recoveryPubKey));
+        await f().setDoc(secRef(uid), secData);
       }
       await KeyStore.put(uid, { priv: myPrivKey, pub: myPubB64 });
     } catch (e) { console.warn("E2E setup failed", e); myPrivKey = null; }
@@ -1509,7 +1531,7 @@ video.media-real { max-height: 300px; }
   }
   async function e2eRewrap(newPassword) {   // keep the wrapped key in sync after a password change
     if (!myPrivKey || !session) return;
-    try { await f().updateDoc(uref(session.uid), { encPrivKey: JSON.stringify(await e2eWrapPw(myPrivKey, newPassword)) }); } catch (e) { console.warn("rewrap failed", e); }
+    try { await f().setDoc(secRef(session.uid), { encPrivKey: JSON.stringify(await e2eWrapPw(myPrivKey, newPassword)) }, { merge: true }); } catch (e) { console.warn("rewrap failed", e); }
   }
 
   // ============================================================
@@ -1655,7 +1677,7 @@ video.media-real { max-height: 300px; }
     list.innerHTML = rows.map(it => {
       const c = it.contact, outgoing = it.sender_id === session.uid;
       return `<div class="chat-row ${it.unread ? "unread" : ""}" data-chat="${c.id}">
-        <div class="avatar" style="${avatarStyle(c)}">${c.avatar}</div>
+        <div class="avatar" style="${avatarStyle(c)}">${escapeHtml(c.avatar)}</div>
         <div class="meta">
           <div class="line1"><span class="name">${escapeHtml(c.name)}</span><span class="time">${fmtListTime(it.last_at)}</span></div>
           <div class="line2">${outgoing ? tickSVG(it.unread ? "delivered" : "read") : ""}<span class="snippet">${escapeHtml(snippetOf(it))}</span>${it.unread ? `<span class="badge">${it.unread}</span>` : ""}</div>
@@ -1843,20 +1865,20 @@ video.media-real { max-height: 300px; }
     const reply = m.replyTo ? `<div class="reply-quote${m.replyTo.id ? " tappable" : ""}"${m.replyTo.id ? ` data-reply-to="${m.replyTo.id}"` : ""}><div class="rq-name">${escapeHtml(m.replyTo.name || "")}</div><div class="rq-text">${escapeHtml(m.replyTo.snippet || "")}</div></div>` : "";
     let inner = "";
     if (m.kind === "voice") {
-      inner = `<div class="voice">${meta.data ? `<audio src="${meta.data}" preload="none"></audio>` : ""}<span class="play"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></span><span class="wave">${Array.from({length:22},(_,i)=>`<i style="height:${20+Math.abs(Math.sin(i*1.3))*70|0}%"></i>`).join("")}</span><span class="dur">${meta.dur||"0:08"}</span></div>`;
+      inner = `<div class="voice">${meta.data ? `<audio src="${escapeHtml(safeMediaSrc(meta.data))}" preload="none"></audio>` : ""}<span class="play"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></span><span class="wave">${Array.from({length:22},(_,i)=>`<i style="height:${20+Math.abs(Math.sin(i*1.3))*70|0}%"></i>`).join("")}</span><span class="dur">${escapeHtml(meta.dur||"0:08")}</span></div>`;
     } else if (m.kind === "image") {
       inner = meta.data
-        ? `<img class="media-real" src="${meta.data}" loading="lazy">${meta.caption ? `<div class="txt">${escapeHtml(meta.caption)}</div>` : ""}`
+        ? `<img class="media-real" src="${escapeHtml(safeMediaSrc(meta.data))}" loading="lazy">${meta.caption ? `<div class="txt">${escapeHtml(meta.caption)}</div>` : ""}`
         : `<div class="media-img"><svg viewBox="0 0 24 24"><path d="M21 19V5a2 2 0 00-2-2H5a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2zM8.5 13.5l2.5 3 3.5-4.5 4.5 6H5l3.5-4.5z"/></svg></div>`;
     } else if (m.kind === "video") {
       inner = meta.data
-        ? `<video class="media-real" src="${meta.data}" controls playsinline></video>`
+        ? `<video class="media-real" src="${escapeHtml(safeMediaSrc(meta.data))}" controls playsinline></video>`
         : `<div class="media-img"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></div>`;
     } else if (m.kind === "doc") {
-      inner = `<a class="doc-chip" ${meta.data ? `href="${meta.data}" download="${escapeHtml(meta.docname||'file')}"` : ""}><span class="di"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6z"/></svg></span><span><div class="dn">${escapeHtml(meta.docname||"Document")}</div><div class="ds">${meta.docsize||""}${meta.data ? " · Tap to open" : ""}</div></span></a>`;
+      inner = `<a class="doc-chip" ${meta.data ? `href="${escapeHtml(safeHref(meta.data))}" download="${escapeHtml(meta.docname||'file')}"` : ""}><span class="di"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6z"/></svg></span><span><div class="dn">${escapeHtml(meta.docname||"Document")}</div><div class="ds">${escapeHtml(meta.docsize||"")}${meta.data ? " · Tap to open" : ""}</div></span></a>`;
     } else if (m.kind === "location") {
-      const href = (meta.lat != null) ? `https://www.google.com/maps?q=${meta.lat},${meta.lng}` : "#";
-      inner = `<a class="loc-link" href="${href}" target="_blank" rel="noopener"><div class="media-img" style="background:linear-gradient(135deg,#10b981,#059669)"><svg viewBox="0 0 24 24"><path d="M12 2a7 7 0 00-7 7c0 5.25 7 13 7 13s7-7.75 7-13a7 7 0 00-7-7zm0 9.5A2.5 2.5 0 1112 6.5a2.5 2.5 0 010 5z"/></svg></div><div class="txt">📍 Location · Tap to open map</div></a>`;
+      const href = (typeof meta.lat === "number" && typeof meta.lng === "number") ? ("https://www.google.com/maps?q=" + meta.lat + "," + meta.lng) : "#";
+      inner = `<a class="loc-link" href="${escapeHtml(href)}" target="_blank" rel="noopener"><div class="media-img" style="background:linear-gradient(135deg,#10b981,#059669)"><svg viewBox="0 0 24 24"><path d="M12 2a7 7 0 00-7 7c0 5.25 7 13 7 13s7-7.75 7-13a7 7 0 00-7-7zm0 9.5A2.5 2.5 0 1112 6.5a2.5 2.5 0 010 5z"/></svg></div><div class="txt">📍 Location · Tap to open map</div></a>`;
     } else {
       inner = `<div class="txt">${escapeHtml(m.body)}</div>`;
     }
@@ -2512,7 +2534,7 @@ video.media-real { max-height: 300px; }
       <div class="stat-card"><div class="n">${revoked}</div><div class="l">Revoked</div></div>`;
     $("#admin-users").innerHTML = adminUsers.map(u => `
       <div class="user-card" data-u="${u.id}">
-        <div class="avatar" style="${avatarStyle(u)}">${u.avatar}</div>
+        <div class="avatar" style="${avatarStyle(u)}">${escapeHtml(u.avatar)}</div>
         <div class="uc-body">
           <div class="uc-name">${escapeHtml(u.name)} ${u.role==="admin"?'<span class="pill-status" style="background:color-mix(in srgb,#7c3aed 20%,transparent);color:#7c3aed">Admin</span>':''}</div>
           <div class="uc-user">@${escapeHtml(u.username)} · <span class="pill-status ${u.status}">${u.status}</span></div>
@@ -2615,7 +2637,7 @@ video.media-real { max-height: 300px; }
       await refreshUsersCache();
       const contacts = Object.keys(usersCache).filter(uid => uid !== session.uid && usersCache[uid].status === "active").map(uid => pubUser(uid, usersCache[uid]));
       openModal(`<h3>New chat</h3><div class="msub">${contacts.length ? "Start a conversation." : "No other users yet — add some in the Admin panel."}</div>
-        <div>${contacts.map(c=>`<div class="list-item" data-nc="${c.id}" style="border-radius:12px;background:var(--card-2);margin-bottom:8px"><div class="avatar" style="width:44px;height:44px;font-size:18px;${avatarStyle(c)}">${c.avatar}</div><div class="li-body"><div class="li-t">${escapeHtml(c.name)}</div><div class="li-s">${escapeHtml(c.bio)}</div></div></div>`).join("")}</div>
+        <div>${contacts.map(c=>`<div class="list-item" data-nc="${c.id}" style="border-radius:12px;background:var(--card-2);margin-bottom:8px"><div class="avatar" style="width:44px;height:44px;font-size:18px;${avatarStyle(c)}">${escapeHtml(c.avatar)}</div><div class="li-body"><div class="li-t">${escapeHtml(c.name)}</div><div class="li-s">${escapeHtml(c.bio)}</div></div></div>`).join("")}</div>
         <div class="modal-actions"><button class="cancel">Close</button></div>`,
         (root) => $$("[data-nc]", root).forEach(b => b.addEventListener("click", () => { const c = contacts.find(x=>x.id===b.dataset.nc); closeModal(); openChat(c); })));
     });
