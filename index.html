@@ -2700,7 +2700,27 @@ video.media-real { max-height: 300px; }
     $("#call-camera").style.display = type === "video" ? "grid" : "none";
     $("#call-speaker").classList.toggle("on", speakerOn);   // reflect earpiece/speaker default for this call type
   }
-  const getMedia = (type) => navigator.mediaDevices.getUserMedia({ audio: true, video: type === "video" });
+  // Capture tuning: clean up the mic (echo/noise/gain) and request a sensible,
+  // not-wasteful video size so it's sharp but light on weak connections.
+  const AUDIO_CONSTRAINTS = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
+  const VIDEO_CONSTRAINTS = { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30, max: 30 } };
+  const getMedia = (type) => navigator.mediaDevices.getUserMedia({
+    audio: AUDIO_CONSTRAINTS,
+    video: type === "video" ? Object.assign({ facingMode: "user" }, VIDEO_CONSTRAINTS) : false,
+  });
+  // Cap send bitrate so video degrades gracefully (stays smooth) instead of freezing.
+  async function tuneBitrates() {
+    if (!pc) return;
+    for (const sender of pc.getSenders()) {
+      if (!sender.track) continue;
+      try {
+        const params = sender.getParameters();
+        if (!params.encodings || !params.encodings.length) params.encodings = [{}];
+        params.encodings[0].maxBitrate = sender.track.kind === "video" ? 1000000 : 64000; // ~1 Mbps video / 64 kbps Opus
+        await sender.setParameters(params);
+      } catch (e) {}
+    }
+  }
   function attachStreams() {
     remoteStream = new MediaStream();
     pc.ontrack = (e) => {
@@ -2745,7 +2765,7 @@ video.media-real { max-height: 300px; }
     const calleeCands = f().collection(callRef, "calleeCandidates");
     pc.onicecandidate = (e) => { if (e.candidate) f().addDoc(callerCands, e.candidate.toJSON()); };
     pc.onconnectionstatechange = () => { if (pc && pc.connectionState === "connected") startCallTimer(); };
-    const offer = await pc.createOffer(); await pc.setLocalDescription(offer);
+    const offer = await pc.createOffer(); await pc.setLocalDescription(offer); await tuneBitrates();
     await f().setDoc(callRef, {
       caller: session.uid, callee: contact.id, parties: [session.uid, contact.id], type,
       callerName: session.user.name, callerAvatar: session.user.avatar, callerColor: session.user.color,
@@ -2776,7 +2796,7 @@ video.media-real { max-height: 300px; }
     pc.onicecandidate = (e) => { if (e.candidate) f().addDoc(calleeCands, e.candidate.toJSON()); };
     pc.onconnectionstatechange = () => { if (pc && pc.connectionState === "connected") startCallTimer(); };
     await pc.setRemoteDescription(new RTCSessionDescription(d.offer));
-    const answer = await pc.createAnswer(); await pc.setLocalDescription(answer);
+    const answer = await pc.createAnswer(); await pc.setLocalDescription(answer); await tuneBitrates();
     await f().updateDoc(callRef, { answer: { type: answer.type, sdp: answer.sdp }, status: "accepted" });
     callUnsubs.push(f().onSnapshot(callRef, (snap) => { const x = snap.data(); if (x && x.status === "ended") hangUp(false); }));
     callUnsubs.push(f().onSnapshot(callerCands, (snap) => {
@@ -2822,7 +2842,7 @@ video.media-real { max-height: 300px; }
     if (!localStream || !pc) return;
     facing = facing === "user" ? "environment" : "user";
     try {
-      const ns = await navigator.mediaDevices.getUserMedia({ video: { facingMode: facing }, audio: false });
+      const ns = await navigator.mediaDevices.getUserMedia({ video: Object.assign({ facingMode: facing }, VIDEO_CONSTRAINTS), audio: false });
       const nt = ns.getVideoTracks()[0];
       const sender = pc.getSenders().find(s => s.track && s.track.kind === "video");
       if (sender) await sender.replaceTrack(nt);
