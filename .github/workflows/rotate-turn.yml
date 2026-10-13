@@ -1,0 +1,38 @@
+name: Rotate TURN credentials
+
+# Cloudflare TURN credentials expire after 48h, so refresh them every 12h and
+# commit the result to turn.json (which the app reads at call time). The secret
+# key lives in repo Actions secrets — never in the public site.
+on:
+  schedule:
+    - cron: "23 */12 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency: rotate-turn
+
+jobs:
+  rotate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate fresh Cloudflare TURN credentials
+        env:
+          CF_TURN_KEY_ID: ${{ secrets.CF_TURN_KEY_ID }}
+          CF_TURN_API_TOKEN: ${{ secrets.CF_TURN_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          resp=$(curl -s "https://rtc.live.cloudflare.com/v1/turn/keys/${CF_TURN_KEY_ID}/credentials/generate-ice-servers" \
+            -H "Authorization: Bearer ${CF_TURN_API_TOKEN}" \
+            -H "Content-Type: application/json" \
+            --data '{"ttl": 172800}')
+          printf '%s' "$resp" | python3 -c "import sys,json,datetime;d=json.load(sys.stdin);assert isinstance(d.get('iceServers'),list) and d['iceServers'],'bad response';open('turn.json','w').write(json.dumps({'iceServers':d['iceServers'],'rotatedAt':datetime.datetime.now(datetime.timezone.utc).isoformat()}))"
+      - name: Commit if changed
+        run: |
+          git config user.name "turn-bot"
+          git config user.email "turn-bot@users.noreply.github.com"
+          git add turn.json
+          git diff --cached --quiet || git commit -m "chore: rotate TURN credentials"
+          git push
