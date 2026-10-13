@@ -2649,7 +2649,24 @@ video.media-real { max-height: 300px; }
   // ============================================================
   //  Voice & video calls (WebRTC, Firestore signaling, Google STUN)
   // ============================================================
-  const RTC_CONFIG = { iceServers: [{ urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"] }] };
+  // --- ICE / TURN ---------------------------------------------------------
+  // STUN alone can't connect calls on restrictive mobile/carrier networks; a TURN
+  // server relays the media when a direct path fails. Fill these two after signing
+  // up (free) at metered.ca → create a TURN app → copy the subdomain + API key.
+  // Lock the key to talktorohit-web.github.io in the Metered dashboard.
+  const METERED_SUBDOMAIN = "";   // e.g. "nexuschat"  → nexuschat.metered.live
+  const METERED_API_KEY = "";     // Metered TURN API key
+  const STUN_ONLY = [{ urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"] }];
+  // Fetch fresh, geo-optimized TURN credentials per call; fall back to STUN-only.
+  async function getIceConfig() {
+    if (METERED_API_KEY && METERED_SUBDOMAIN) {
+      try {
+        const r = await fetch(`https://${METERED_SUBDOMAIN}.metered.live/api/v1/turn/credentials?apiKey=${encodeURIComponent(METERED_API_KEY)}`);
+        if (r.ok) { const servers = await r.json(); if (Array.isArray(servers) && servers.length) return { iceServers: servers }; }
+      } catch (e) { console.warn("TURN fetch failed — using STUN only", e); }
+    }
+    return { iceServers: STUN_ONLY };
+  }
   let pc = null, localStream = null, remoteStream = null;
   let callRef = null, callUnsubs = [], callTimer = null, incomingUnsub = null;
   let handledCalls = new Set();
@@ -2722,7 +2739,7 @@ video.media-real { max-height: 300px; }
     inCall = true; localStream = stream;
     speakerOn = (type === "video");   // voice calls start on the earpiece, video on the loudspeaker
     showCallUI(contact, type, "Calling…");
-    pc = new RTCPeerConnection(RTC_CONFIG); attachStreams();
+    pc = new RTCPeerConnection(await getIceConfig()); attachStreams();
     callRef = f().doc(callsCol());
     const callerCands = f().collection(callRef, "callerCandidates");
     const calleeCands = f().collection(callRef, "calleeCandidates");
@@ -2752,7 +2769,7 @@ video.media-real { max-height: 300px; }
     inCall = true; localStream = stream;
     speakerOn = (type === "video");   // voice calls start on the earpiece, video on the loudspeaker
     showCallUI({ name: d.callerName, avatar: d.callerAvatar, color: d.callerColor }, type, "Connecting…");
-    pc = new RTCPeerConnection(RTC_CONFIG); attachStreams();
+    pc = new RTCPeerConnection(await getIceConfig()); attachStreams();
     callRef = f().doc(callsCol(), callId);
     const callerCands = f().collection(callRef, "callerCandidates");
     const calleeCands = f().collection(callRef, "calleeCandidates");
