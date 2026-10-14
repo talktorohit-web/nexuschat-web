@@ -1224,14 +1224,7 @@ video.media-real { max-height: 300px; }
   "use strict";
 
   // Injected at deploy time with the user's Firebase web config.
-  const FIREBASE_CONFIG = {
-  "apiKey": "AIzaSyANAlCju_w5uwc06IYqQYz_AHJ__iuGGEI",
-  "authDomain": "nexuschat-ccb15.firebaseapp.com",
-  "projectId": "nexuschat-ccb15",
-  "storageBucket": "nexuschat-ccb15.firebasestorage.app",
-  "messagingSenderId": "79966594070",
-  "appId": "1:79966594070:web:c63a939a5a5b4a7e1b4137"
-};
+  const FIREBASE_CONFIG = __FIREBASE_CONFIG__;
   const EMAIL_DOMAIN = "nexuschat.app";              // username -> username@nexuschat.app
   const ADMIN_EMAIL = "admin@" + EMAIL_DOMAIN;
 
@@ -2684,6 +2677,18 @@ video.media-real { max-height: 300px; }
     } catch (e) { console.warn("TURN fetch failed — using STUN only", e); }
     return { iceServers: STUN_ONLY };
   }
+  // Build a peer tuned for a fast, reliable connect:
+  //  • iceCandidatePoolSize pre-gathers network paths BEFORE the offer, so the
+  //    first candidates are ready instantly instead of trickling in late.
+  //  • max-bundle + require rtcp-mux carry audio+video on ONE transport, which
+  //    is far quicker to reach "connected" than negotiating several.
+  function makePeer(ice) {
+    return new RTCPeerConnection(Object.assign({
+      iceCandidatePoolSize: 4,
+      bundlePolicy: "max-bundle",
+      rtcpMuxPolicy: "require",
+    }, ice));
+  }
   let pc = null, localStream = null, remoteStream = null;
   let callRef = null, callUnsubs = [], callTimer = null, incomingUnsub = null;
   let handledCalls = new Set();
@@ -2731,9 +2736,19 @@ video.media-real { max-height: 300px; }
     for (const sender of pc.getSenders()) {
       if (!sender.track) continue;
       try {
+        const isVideo = sender.track.kind === "video";
+        // Tell the encoder this is live motion → favour a fluid picture over
+        // freezing to keep a still frame sharp.
+        if (isVideo) { try { sender.track.contentHint = "motion"; } catch (e) {} }
         const params = sender.getParameters();
         if (!params.encodings || !params.encodings.length) params.encodings = [{}];
-        params.encodings[0].maxBitrate = sender.track.kind === "video" ? 1000000 : 64000; // ~1 Mbps video / 64 kbps Opus
+        // 2.5 Mbps ceiling makes 720p look sharp on a good link; the browser's
+        // own congestion control still throttles below it on a weak one.
+        params.encodings[0].maxBitrate = isVideo ? 2500000 : 64000;
+        params.encodings[0].networkPriority = "high";
+        // When the link weakens, shed RESOLUTION, not framerate — a slightly
+        // softer but smooth picture beats a crisp, stuttering one.
+        params.degradationPreference = "balanced";
         await sender.setParameters(params);
       } catch (e) {}
     }
@@ -2776,12 +2791,13 @@ video.media-real { max-height: 300px; }
     inCall = true; localStream = stream;
     speakerOn = (type === "video");   // voice calls start on the earpiece, video on the loudspeaker
     showCallUI(contact, type, "Calling…");
-    pc = new RTCPeerConnection(await getIceConfig()); attachStreams();
+    pc = makePeer(await getIceConfig()); attachStreams();
     callRef = f().doc(callsCol());
     const callerCands = f().collection(callRef, "callerCandidates");
     const calleeCands = f().collection(callRef, "calleeCandidates");
     pc.onicecandidate = (e) => { if (e.candidate) f().addDoc(callerCands, e.candidate.toJSON()); };
     pc.onconnectionstatechange = () => { if (pc && pc.connectionState === "connected") startCallTimer(); };
+    pc.oniceconnectionstatechange = () => { if (pc && !callTimer && pc.iceConnectionState === "checking") $("#call-status").textContent = "Connecting…"; };
     const offer = await pc.createOffer(); await pc.setLocalDescription(offer); await tuneBitrates();
     await f().setDoc(callRef, {
       caller: session.uid, callee: contact.id, parties: [session.uid, contact.id], type,
@@ -2806,12 +2822,13 @@ video.media-real { max-height: 300px; }
     inCall = true; localStream = stream;
     speakerOn = (type === "video");   // voice calls start on the earpiece, video on the loudspeaker
     showCallUI({ name: d.callerName, avatar: d.callerAvatar, color: d.callerColor }, type, "Connecting…");
-    pc = new RTCPeerConnection(await getIceConfig()); attachStreams();
+    pc = makePeer(await getIceConfig()); attachStreams();
     callRef = f().doc(callsCol(), callId);
     const callerCands = f().collection(callRef, "callerCandidates");
     const calleeCands = f().collection(callRef, "calleeCandidates");
     pc.onicecandidate = (e) => { if (e.candidate) f().addDoc(calleeCands, e.candidate.toJSON()); };
     pc.onconnectionstatechange = () => { if (pc && pc.connectionState === "connected") startCallTimer(); };
+    pc.oniceconnectionstatechange = () => { if (pc && !callTimer && pc.iceConnectionState === "checking") $("#call-status").textContent = "Connecting…"; };
     await pc.setRemoteDescription(new RTCSessionDescription(d.offer));
     const answer = await pc.createAnswer(); await pc.setLocalDescription(answer); await tuneBitrates();
     await f().updateDoc(callRef, { answer: { type: answer.type, sdp: answer.sdp }, status: "accepted" });
@@ -2906,6 +2923,7 @@ video.media-real { max-height: 300px; }
   }
   boot();
 })();
+
 
 </script>
 </body>
