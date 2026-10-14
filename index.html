@@ -2706,6 +2706,7 @@ video.media-real { max-height: 300px; }
     $("#call-mute").classList.remove("off"); $("#call-camera").classList.remove("off"); $("#call-speaker").classList.remove("off", "on");
     speakerOn = false; facing = "user";
     callRef = null; inCall = false;
+    nativeAudioReset();   // hand audio control back to the OS (wrapper only)
   }
   function startCallTimer() {
     if (callTimer) return;
@@ -2768,10 +2769,25 @@ video.media-real { max-height: 300px; }
   // element plays through the loudspeaker and the <audio> element through the
   // earpiece/receiver, so we pick the sink by muting the other element. Only one
   // element is ever unmuted, so there is never doubled audio.
+  // When NexusChat runs inside its Android wrapper (Capacitor), a tiny native
+  // plugin does what a browser cannot: send call audio to the phone's earpiece.
+  // In a plain browser these are no-ops, so the website is unaffected.
+  const CAP = () => (typeof window !== "undefined" && window.Capacitor) || null;
+  const isNative = () => { const c = CAP(); return !!(c && c.isNativePlatform && c.isNativePlatform()); };
+  function nativeRoute(speaker) {
+    const c = CAP(); if (!c || !c.Plugins || !c.Plugins.AudioRoute) return;
+    try { c.Plugins.AudioRoute[speaker ? "setSpeaker" : "setEarpiece"](); } catch (e) {}
+  }
+  function nativeAudioReset() {
+    const c = CAP(); if (!c || !c.Plugins || !c.Plugins.AudioRoute) return;
+    try { c.Plugins.AudioRoute.reset(); } catch (e) {}
+  }
   async function routeAudio() {
     const rv = $("#remote-video"), ra = $("#remote-audio");
     if (speakerOn) { rv.muted = false; ra.muted = true; try { await ra.pause?.(); } catch (e) {} try { await rv.play?.(); } catch (e) {} }
     else { rv.muted = true; ra.muted = false; try { await ra.play?.(); } catch (e) {} }
+    // Inside the Android wrapper the native plugin owns earpiece/speaker routing.
+    if (isNative()) { nativeRoute(speakerOn); return; }
     // Best-effort on browsers that support output selection (desktop / newer Android).
     try {
       const sink = speakerOn ? ra : rv;  // the muted one can still carry the sink hint
@@ -2790,6 +2806,7 @@ video.media-real { max-height: 300px; }
     try { stream = await getMedia(type); } catch (e) { toast(type === "video" ? "Camera & mic access needed" : "Microphone access needed"); return; }
     inCall = true; localStream = stream;
     speakerOn = (type === "video");   // voice calls start on the earpiece, video on the loudspeaker
+    if (isNative()) nativeRoute(speakerOn);   // set the native audio route up front
     showCallUI(contact, type, "Calling…");
     pc = makePeer(await getIceConfig()); attachStreams();
     callRef = f().doc(callsCol());
@@ -2821,6 +2838,7 @@ video.media-real { max-height: 300px; }
     try { stream = await getMedia(type); } catch (e) { toast("Access needed to answer"); try { f().updateDoc(f().doc(callsCol(), callId), { status: "declined" }); } catch (_) {} return; }
     inCall = true; localStream = stream;
     speakerOn = (type === "video");   // voice calls start on the earpiece, video on the loudspeaker
+    if (isNative()) nativeRoute(speakerOn);   // set the native audio route up front
     showCallUI({ name: d.callerName, avatar: d.callerAvatar, color: d.callerColor }, type, "Connecting…");
     pc = makePeer(await getIceConfig()); attachStreams();
     callRef = f().doc(callsCol(), callId);
@@ -2923,6 +2941,7 @@ video.media-real { max-height: 300px; }
   }
   boot();
 })();
+
 
 
 </script>
